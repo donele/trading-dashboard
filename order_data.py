@@ -4,25 +4,34 @@ from datetime import datetime
 from pathlib import Path
 import json
 import re
-import threading
-from typing import Dict, Optional
+from typing import Optional
 
 import pandas as pd
 
 ORDER_FILE_PATTERN = re.compile(r"^orders?\.(\d{8})\.log$")
 DEFAULT_INTERVAL_MINUTES = 10
 
-_FILE_COUNTS: Dict[str, Dict[str, Dict[str, Dict[str, float]]]] = {}
-_FILE_MTIMES: Dict[str, float] = {}
-_FILE_PARTIAL: Dict[str, bool] = {}
-_BACKGROUND_LOCK = threading.Lock()
-_BACKGROUND_RUNNING = False
+
+def _normalize_id(value: object) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text
 
 
 def _list_order_files(log_dir: Path) -> list[Path]:
     if not log_dir.exists():
         return []
-    return sorted(path for path in log_dir.iterdir() if path.is_file() and ORDER_FILE_PATTERN.match(path.name))
+    return [path for path in log_dir.iterdir() if path.is_file() and ORDER_FILE_PATTERN.match(path.name)]
+
+
+def _latest_log_file(log_dir: Path) -> Optional[Path]:
+    files = _list_order_files(log_dir)
+    if not files:
+        return None
+    return max(files, key=lambda p: p.stat().st_mtime)
 
 
 def _extract_timestamp(line: str) -> Optional[datetime]:
@@ -47,138 +56,6 @@ def _parse_payload(line: str) -> dict:
         return {}
 
 
-def _make_key(strategy_id: int, client_order_id: int) -> str:
-    return f"{strategy_id}:{client_order_id}"
-
-
-def _build_day_index(log_date: pd.Timestamp, interval_minutes: int) -> pd.DatetimeIndex:
-    start = log_date.normalize()
-    periods = 24 * 60 // interval_minutes
-    return pd.date_range(start=start, periods=periods, freq=f"{interval_minutes}min")
-
-
-def _parse_lines_to_day_counts(lines: list[str], *, interval_minutes: int, day_filter: Optional[str] = None) -> Dict[str, Dict[str, Dict[str, float]]]:
-    day_new_clients: Dict[str, Dict[str, pd.Timestamp]] = {}
-    day_fill_buckets: Dict[str, Dict[str, int]] = {}
-    day_notional_buckets: Dict[str, Dict[str, float]] = {}
-    day_keys: Dict[str, Dict[str, Dict[str, object]]] = {}
-
-    for line in lines:
-        ts = _extract_timestamp(line)
-        if ts is None:
-            continue
-        day_iso = pd.Timestamp(ts.date()).isoformat()
-        if day_filter is not None and day_iso != day_filter:
-            continue
-
-        payload = _parse_payload(line)
-        if not payload:
-            continue
-
-        bucket_iso = pd.Timestamp(ts).floor(f"{interval_minutes}min").isoformat()
-
-        action = payload.get("order_action")
-        client_id = payload.get("client_order_id")
-        strategy = payload.get("strategy_id")
-        parent = payload.get("parent_order_id")
-        symbol = payload.get("symbol")
-
-        if action == "NEW" and client_id is not None and strategy is not None:
-            key = _make_key(int(strategy), int(client_id))
-            clients = day_new_clients.setdefault(day_iso, {})
-            current = clients.get(key)
-            if current is None or ts < current:
-                clients[key] = ts
-
-            keys = day_keys.setdefault(day_iso, {})
-            entry = keys.setdefault(
-                key,
-                {
-                    "parent_order_id": int(parent) if parent is not None else None,
-                    "strategy_id": int(strategy),
-                    "client_order_id": int(client_id),
-                    "symbol": symbol,
-                    "first_new_ts": ts,
-                    "first_new_iso": ts.isoformat(),
-                    "notional": 0.0,
-                },
-            )
-            if ts < entry["first_new_ts"]:
-                entry["first_new_ts"] = ts
-                entry["first_new_iso"] = ts.isoformat()
-                if symbol:
-                    entry["symbol"] = symbol
-
-        status = payload.get("order_status")
-        if status in {"PARTIAL_FILL", "FILLED"}:
-            fills = day_fill_buckets.setdefault(day_iso, {})
-            fills[bucket_iso] = fills.get(bucket_iso, 0) + 1
-
-            executed_price = payload.get("executed_price")
-            filled_qty = payload.get("filled_qty")
-            if executed_price is None or filled_qty is None:
-                continue
-
-            notional = float(executed_price) * float(filled_qty)
-            notional_map = day_notional_buckets.setdefault(day_iso, {})
-            notional_map[bucket_iso] = notional_map.get(bucket_iso, 0.0) + notional
-
-            if client_id is None or strategy is None:
-                continue
-            key = _make_key(int(strategy), int(client_id))
-            keys = day_keys.setdefault(day_iso, {})
-            entry = keys.setdefault(
-                key,
-                {
-                    "parent_order_id": int(parent) if parent is not None else None,
-                    "strategy_id": int(strategy),
-                    "client_order_id": int(client_id),
-                    "symbol": symbol,
-                    "first_new_ts": ts,
-                    "first_new_iso": ts.isoformat(),
-                    "notional": 0.0,
-                },
-            )
-            if ts < entry["first_new_ts"]:
-                entry["first_new_ts"] = ts
-                entry["first_new_iso"] = ts.isoformat()
-            entry["notional"] = float(entry["notional"]) + notional
-
-    day_counts: Dict[str, Dict[str, Dict[str, float]]] = {}
-    all_days = set(day_new_clients) | set(day_fill_buckets) | set(day_notional_buckets) | set(day_keys)
-    for day in all_days:
-        new_counts: Dict[str, int] = {}
-        for ts in day_new_clients.get(day, {}).values():
-            bucket_iso = pd.Timestamp(ts).floor(f"{interval_minutes}min").isoformat()
-            new_counts[bucket_iso] = new_counts.get(bucket_iso, 0) + 1
-
-        key_map: Dict[str, Dict[str, float]] = {}
-        for key, entry in day_keys.get(day, {}).items():
-            key_map[key] = {
-                "parent_order_id": entry["parent_order_id"],
-                "strategy_id": entry["strategy_id"],
-                "client_order_id": entry["client_order_id"],
-                "symbol": entry.get("symbol"),
-                "first_new_iso": entry["first_new_iso"],
-                "notional": float(entry["notional"]),
-            }
-
-        day_counts[day] = {
-            "new": new_counts,
-            "fills": day_fill_buckets.get(day, {}),
-            "notional": day_notional_buckets.get(day, {}),
-            "keys": key_map,
-        }
-
-    return day_counts
-
-
-def _parse_order_file(path: Path, *, interval_minutes: int) -> Dict[str, Dict[str, Dict[str, float]]]:
-    with path.open("r", encoding="utf-8", errors="ignore") as handle:
-        lines = [line.rstrip("\n") for line in handle]
-    return _parse_lines_to_day_counts(lines, interval_minutes=interval_minutes)
-
-
 def _iter_lines_reverse(path: Path, chunk_size: int = 1024 * 1024):
     with path.open("rb") as handle:
         handle.seek(0, 2)
@@ -198,7 +75,7 @@ def _iter_lines_reverse(path: Path, chunk_size: int = 1024 * 1024):
             yield buffer.decode("utf-8", errors="ignore")
 
 
-def _parse_latest_day_from_file(path: Path, *, interval_minutes: int) -> Dict[str, Dict[str, Dict[str, float]]]:
+def _latest_day_lines(path: Path) -> tuple[Optional[str], list[str]]:
     latest_day: Optional[str] = None
     collected: list[str] = []
 
@@ -214,180 +91,127 @@ def _parse_latest_day_from_file(path: Path, *, interval_minutes: int) -> Dict[st
         elif day_iso < latest_day:
             break
 
-    if not collected or latest_day is None:
-        return {}
+    if latest_day is None:
+        return None, []
 
     collected.reverse()
-    return _parse_lines_to_day_counts(collected, interval_minutes=interval_minutes, day_filter=latest_day)
+    return latest_day, collected
 
 
-def _ensure_file_cached(path: Path, *, interval_minutes: int, fast_only_latest_day: bool = False) -> None:
-    path_str = str(path)
-    mtime = path.stat().st_mtime
-    unchanged = _FILE_MTIMES.get(path_str) == mtime and path_str in _FILE_COUNTS
-    if unchanged and not _FILE_PARTIAL.get(path_str, False):
-        return
-    if unchanged and fast_only_latest_day:
-        return
-
-    if fast_only_latest_day and path_str not in _FILE_COUNTS:
-        _FILE_COUNTS[path_str] = _parse_latest_day_from_file(path, interval_minutes=interval_minutes)
-        _FILE_MTIMES[path_str] = mtime
-        _FILE_PARTIAL[path_str] = True
-        return
-
-    _FILE_COUNTS[path_str] = _parse_order_file(path, interval_minutes=interval_minutes)
-    _FILE_MTIMES[path_str] = mtime
-    _FILE_PARTIAL[path_str] = False
+def _day_index(day_iso: str, interval_minutes: int) -> pd.DatetimeIndex:
+    start = pd.Timestamp(day_iso)
+    periods = 24 * 60 // interval_minutes
+    return pd.date_range(start=start, periods=periods, freq=f"{interval_minutes}min")
 
 
-def _rebuild_aggregated_counts() -> Dict[str, Dict[str, Dict[str, float]]]:
-    aggregated: Dict[str, Dict[str, Dict[str, float]]] = {}
-    aggregated_keys: Dict[str, Dict[str, Dict[str, object]]] = {}
-
-    for file_counts in _FILE_COUNTS.values():
-        for day, metrics in file_counts.items():
-            entry = aggregated.setdefault(day, {"new": {}, "fills": {}, "notional": {}})
-            for metric in ("new", "fills", "notional"):
-                for bucket, value in metrics.get(metric, {}).items():
-                    current = entry[metric].get(bucket, 0)
-                    entry[metric][bucket] = current + value
-
-            key_entry = aggregated_keys.setdefault(day, {})
-            for key, data in metrics.get("keys", {}).items():
-                existing = key_entry.get(key)
-                if existing is None:
-                    key_entry[key] = data.copy()
-                    continue
-                existing["notional"] = float(existing["notional"]) + float(data["notional"])
-                if pd.Timestamp(data["first_new_iso"]) < pd.Timestamp(existing["first_new_iso"]):
-                    existing["first_new_iso"] = data["first_new_iso"]
-                    if data.get("symbol"):
-                        existing["symbol"] = data["symbol"]
-                    existing["parent_order_id"] = data.get("parent_order_id")
-                    existing["strategy_id"] = data["strategy_id"]
-                    existing["client_order_id"] = data["client_order_id"]
-
-    merged: Dict[str, Dict[str, Dict[str, float]]] = {}
-    for day, metrics in aggregated.items():
-        merged[day] = {
-            "new": metrics["new"],
-            "fills": metrics["fills"],
-            "notional": metrics["notional"],
-            "keys": aggregated_keys.get(day, {}),
-        }
-    return merged
-
-
-def _background_worker(log_dir: Path, *, interval_minutes: int) -> None:
-    global _BACKGROUND_RUNNING
-    try:
-        files = sorted(_list_order_files(log_dir), key=lambda p: p.stat().st_mtime, reverse=True)
-        for path in files:
-            _ensure_file_cached(path, interval_minutes=interval_minutes, fast_only_latest_day=False)
-    finally:
-        with _BACKGROUND_LOCK:
-            _BACKGROUND_RUNNING = False
-
-
-def _start_background_processing(log_dir: Path, *, interval_minutes: int) -> None:
-    global _BACKGROUND_RUNNING
-    with _BACKGROUND_LOCK:
-        if _BACKGROUND_RUNNING:
-            return
-        _BACKGROUND_RUNNING = True
-    thread = threading.Thread(
-        target=_background_worker,
-        args=(log_dir,),
-        kwargs={"interval_minutes": interval_minutes},
-        daemon=True,
-    )
-    thread.start()
-
-
-def _latest_log_file(log_dir: Path) -> Optional[Path]:
-    files = _list_order_files(log_dir)
-    if not files:
-        return None
-    return max(files, key=lambda p: p.stat().st_mtime)
-
-
-def get_latest_day_counts(log_dir: Path, *, interval_minutes: int = DEFAULT_INTERVAL_MINUTES) -> Dict[str, Dict[str, Dict[str, float]]]:
+def load_latest_day_metrics(
+    log_dir: Path, *, interval_minutes: int = DEFAULT_INTERVAL_MINUTES
+) -> dict:
     latest = _latest_log_file(log_dir)
     if latest is None:
-        return {}
+        raise FileNotFoundError(f"No order logs found in {log_dir}")
 
-    _ensure_file_cached(latest, interval_minutes=interval_minutes, fast_only_latest_day=True)
-    _start_background_processing(log_dir, interval_minutes=interval_minutes)
-    return _rebuild_aggregated_counts()
+    day_iso, lines = _latest_day_lines(latest)
+    if day_iso is None:
+        raise FileNotFoundError(f"No parseable timestamps in {latest}")
 
+    new_by_key: dict[str, datetime] = {}
+    new_by_key_symbol: dict[str, datetime] = {}
+    fill_counts: dict[pd.Timestamp, int] = {}
+    notional_by_bucket: dict[pd.Timestamp, float] = {}
+    notional_by_key_bucket: dict[str, dict[pd.Timestamp, float]] = {}
+    fill_events: list[dict[str, object]] = []
 
-def get_serialized_day_counts(log_dir: Path, *, interval_minutes: int = DEFAULT_INTERVAL_MINUTES) -> Dict[str, Dict[str, Dict[str, float]]]:
-    current_files = {str(path): path for path in _list_order_files(log_dir)}
-    for path in current_files.values():
-        _ensure_file_cached(path, interval_minutes=interval_minutes, fast_only_latest_day=False)
+    for line in lines:
+        ts = _extract_timestamp(line)
+        if ts is None:
+            continue
+        payload = _parse_payload(line)
+        if not payload:
+            continue
 
-    removed = [key for key in _FILE_COUNTS if key not in current_files]
-    for key in removed:
-        _FILE_COUNTS.pop(key, None)
-        _FILE_MTIMES.pop(key, None)
-        _FILE_PARTIAL.pop(key, None)
+        bucket = pd.Timestamp(ts).floor(f"{interval_minutes}min")
 
-    return _rebuild_aggregated_counts()
+        action = payload.get("order_action")
+        client_id = _normalize_id(payload.get("client_order_id"))
+        strategy_id = _normalize_id(payload.get("strategy_id"))
+        symbol = str(payload.get("symbol") or "UNKNOWN")
+        if action == "NEW" and client_id is not None and strategy_id is not None:
+            key = f"{strategy_id}:{client_id}"
+            current = new_by_key.get(key)
+            if current is None or ts < current:
+                new_by_key[key] = ts
+            key_symbol = f"{strategy_id}:{client_id}:{symbol}"
+            current_symbol = new_by_key_symbol.get(key_symbol)
+            if current_symbol is None or ts < current_symbol:
+                new_by_key_symbol[key_symbol] = ts
 
+        status = payload.get("order_status")
+        if status in {"PARTIAL_FILL", "FILLED"}:
+            executed_price = payload.get("executed_price")
+            filled_qty = payload.get("filled_qty")
+            if executed_price is None or filled_qty is None or strategy_id is None or client_id is None:
+                continue
 
-def available_dates_from_serialized(day_counts: Dict[str, Dict[str, Dict[str, float]]]) -> list[str]:
-    return sorted(day_counts.keys(), key=pd.Timestamp)
+            client_key = f"{strategy_id}:{client_id}"
+            first_new_ts = new_by_key.get(client_key)
+            symbol = str(payload.get("symbol") or "UNKNOWN")
+            client_symbol_key = f"{strategy_id}:{client_id}:{symbol}"
+            first_new_symbol_ts = new_by_key_symbol.get(client_symbol_key)
+            if first_new_ts is None or first_new_symbol_ts is None or ts < first_new_ts or ts < first_new_symbol_ts:
+                continue
 
+            filled_qty_val = float(filled_qty)
+            executed_price_val = float(executed_price)
+            if filled_qty_val <= 0 or executed_price_val <= 0:
+                continue
 
-def counts_for_date_from_serialized(
-    day_counts: Dict[str, Dict[str, Dict[str, float]]],
-    date_iso: str,
-    *,
-    interval_minutes: int = DEFAULT_INTERVAL_MINUTES,
-    metric: str = "new",
-) -> pd.Series:
-    target = pd.Timestamp(date_iso)
-    index = _build_day_index(target, interval_minutes)
-    if date_iso not in day_counts or metric not in day_counts[date_iso]:
-        return pd.Series(0, index=index, dtype=float)
-    buckets = {pd.Timestamp(k): v for k, v in day_counts[date_iso][metric].items()}
-    return pd.Series(buckets, dtype=float).reindex(index, fill_value=0)
+            fill_counts[bucket] = fill_counts.get(bucket, 0) + 1
+            notional = executed_price_val * filled_qty_val
+            notional_by_bucket[bucket] = notional_by_bucket.get(bucket, 0.0) + notional
+            key = f"{strategy_id}:{symbol}"
+            by_bucket = notional_by_key_bucket.setdefault(key, {})
+            by_bucket[bucket] = by_bucket.get(bucket, 0.0) + notional
+            fill_events.append(
+                {
+                    "bucket_iso": bucket.isoformat(),
+                    "event_time_iso": pd.Timestamp(ts).isoformat(),
+                    "symbol": symbol,
+                    "strategy_id": strategy_id,
+                    # Keep ids as strings to avoid JS precision loss and type drift.
+                    "client_order_id": client_id,
+                    "side": str(payload.get("side") or payload.get("order_side") or "").upper(),
+                    "executed_price": executed_price_val,
+                    "filled_qty": filled_qty_val,
+                    "key": key,
+                }
+            )
 
+    new_counts: dict[pd.Timestamp, int] = {}
+    for first_ts in new_by_key.values():
+        bucket = pd.Timestamp(first_ts).floor(f"{interval_minutes}min")
+        new_counts[bucket] = new_counts.get(bucket, 0) + 1
 
-def latest_date_from_serialized(day_counts: Dict[str, Dict[str, Dict[str, float]]]) -> Optional[str]:
-    dates = available_dates_from_serialized(day_counts)
-    if not dates:
-        return None
-    return dates[-1]
+    index = _day_index(day_iso, interval_minutes)
+    new_series = pd.Series(new_counts, dtype=float).reindex(index, fill_value=0)
+    fill_series = pd.Series(fill_counts, dtype=float).reindex(index, fill_value=0)
+    notional_series = pd.Series(notional_by_bucket, dtype=float).reindex(index, fill_value=0)
+    cumulative_notional = notional_series.cumsum()
+    cumulative_notional_by_key: dict[str, pd.Series] = {}
+    bucket_notional_by_key: dict[str, pd.Series] = {}
+    for key, buckets in notional_by_key_bucket.items():
+        bucket_series = pd.Series(buckets, dtype=float).reindex(index, fill_value=0)
+        bucket_notional_by_key[key] = bucket_series
+        cumulative_notional_by_key[key] = bucket_series.cumsum()
 
-
-def daily_totals_from_serialized(day_counts: Dict[str, Dict[str, Dict[str, float]]]) -> Dict[str, int]:
-    totals: Dict[str, int] = {}
-    for date, metrics in day_counts.items():
-        totals[date] = int(sum(metrics.get("new", {}).values()))
-    return totals
-
-
-def cumulative_notional_points(
-    day_counts: Dict[str, Dict[str, Dict[str, float]]], date_iso: str
-) -> list[Dict[str, float | str]]:
-    if date_iso not in day_counts:
-        return []
-    buckets = day_counts[date_iso].get("notional", {})
-    if not buckets:
-        return []
-
-    series = pd.Series({pd.Timestamp(k): v for k, v in buckets.items()}, dtype=float).sort_index()
-    cumulative = series.cumsum()
-
-    result: list[Dict[str, float | str]] = []
-    for timestamp, bucket_value in series.items():
-        result.append(
-            {
-                "bucket_iso": timestamp.isoformat(),
-                "bucket_notional": float(bucket_value),
-                "cumulative": float(cumulative.loc[timestamp]),
-            }
-        )
-    return result
+    return {
+        "date_iso": day_iso,
+        "source_file": latest.name,
+        "new": new_series,
+        "fills": fill_series,
+        "notional": notional_series,
+        "cumulative_notional": cumulative_notional,
+        "bucket_notional_by_key": bucket_notional_by_key,
+        "cumulative_notional_by_key": cumulative_notional_by_key,
+        "fill_events": fill_events,
+    }
