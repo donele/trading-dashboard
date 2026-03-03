@@ -53,14 +53,14 @@ def _marker_symbol_for_side(side: object) -> str:
 
 
 @lru_cache(maxsize=32)
-def _load_mid_series_for_day(state_dir: str, symbol: str, day_yyyymmdd: str) -> pd.DataFrame:
+def _load_book_series_for_day(state_dir: str, symbol: str, day_yyyymmdd: str) -> pd.DataFrame:
     root = Path(state_dir)
     if not root.exists():
-        return pd.DataFrame(columns=["event_time", "mid_price"])
+        return pd.DataFrame(columns=["event_time", "bid_price", "ask_price"])
 
     files = sorted(root.glob(f"{symbol}.*.{day_yyyymmdd}.csv"))
     if not files:
-        return pd.DataFrame(columns=["event_time", "mid_price"])
+        return pd.DataFrame(columns=["event_time", "bid_price", "ask_price"])
 
     frames: list[pd.DataFrame] = []
     for path in files:
@@ -100,12 +100,14 @@ def _load_mid_series_for_day(state_dir: str, symbol: str, day_yyyymmdd: str) -> 
         if book_valid_col:
             book_valid = pd.to_numeric(df[book_valid_col], errors="coerce")
             valid &= book_valid == 1
-        out = pd.DataFrame({"event_time": event_time[valid], "mid_price": ((bid + ask) / 2.0)[valid]}).dropna()
+        out = pd.DataFrame(
+            {"event_time": event_time[valid], "bid_price": bid[valid], "ask_price": ask[valid]}
+        ).dropna()
         if not out.empty:
             frames.append(out)
 
     if not frames:
-        return pd.DataFrame(columns=["event_time", "mid_price"])
+        return pd.DataFrame(columns=["event_time", "bid_price", "ask_price"])
     combined = pd.concat(frames, ignore_index=True).sort_values("event_time")
     return combined
 
@@ -117,6 +119,7 @@ app.layout = html.Div(
         dcc.Graph(id="new-orders-graph"),
         dcc.Graph(id="cumulative-notional-graph", style={"marginTop": "0.8rem"}),
         dcc.Graph(id="bucket-fills-price-graph", style={"marginTop": "0.8rem"}),
+        dcc.Graph(id="client-order-window-graph", style={"marginTop": "0.8rem"}),
         dcc.Interval(id="refresh-interval", interval=REFRESH_INTERVAL_MS, n_intervals=0),
         dcc.Store(id="metrics-store"),
         html.Div(id="log-source", style={"fontSize": "0.8rem", "color": "#666", "marginTop": "0.5rem"}),
@@ -279,17 +282,18 @@ def update_bucket_fill_prices(click_data, metrics):
     filtered.sort(key=lambda item: item["event_time_iso"])
 
     day_yyyymmdd = bucket_start.strftime("%Y%m%d")
-    mid_day = _load_mid_series_for_day(str(STATE_DIR), key_symbol, day_yyyymmdd)
-    if not mid_day.empty:
-        mid_bucket = mid_day[(mid_day["event_time"] >= bucket_start) & (mid_day["event_time"] < bucket_end)]
+    book_day = _load_book_series_for_day(str(STATE_DIR), key_symbol, day_yyyymmdd)
+    if not book_day.empty:
+        mid_bucket = book_day[(book_day["event_time"] >= bucket_start) & (book_day["event_time"] < bucket_end)].copy()
         if not mid_bucket.empty:
+            mid_bucket["mid_price"] = (mid_bucket["bid_price"] + mid_bucket["ask_price"]) / 2.0
             fig.add_trace(
                 go.Scatter(
                     x=mid_bucket["event_time"],
                     y=mid_bucket["mid_price"],
                     mode="lines",
                     name="mid price",
-                    line=dict(color="#2a9d8f", width=1.8, shape="hv"),
+                    line=dict(color="#2a9d8f", width=1.0, shape="hv"),
                     hovertemplate="Time %{x|%Y-%m-%d %H:%M:%S.%L}<br>Mid %{y:,.4f}<extra></extra>",
                 )
             )
@@ -333,7 +337,14 @@ def update_bucket_fill_prices(click_data, metrics):
                     symbol=[_marker_symbol_for_side(p.get("side")) for p in points],
                 ),
                 customdata=[
-                    [p.get("filled_qty", 0.0), p.get("client_order_id"), p.get("side", "")]
+                    [
+                        p.get("filled_qty", 0.0),
+                        p.get("client_order_id"),
+                        p.get("side", ""),
+                        p.get("strategy_id", ""),
+                        p.get("symbol", ""),
+                        p.get("client_order_key", ""),
+                    ]
                     for p in points
                 ],
                 hovertemplate=(
@@ -351,6 +362,144 @@ def update_bucket_fill_prices(click_data, metrics):
         yaxis_title="Price",
         margin=dict(t=50, b=40, l=40, r=20),
     )
+    return fig
+
+
+@app.callback(
+    Output("client-order-window-graph", "figure"),
+    Input("bucket-fills-price-graph", "clickData"),
+    Input("metrics-store", "data"),
+)
+def update_client_order_window(click_data, metrics):
+    fig = go.Figure()
+    if not metrics:
+        fig.update_layout(
+            title="Click a fill point in Chart 3 to inspect a client-order window",
+            xaxis_title="UTC time",
+            yaxis_title="Price",
+        )
+        return fig
+    if not click_data or "points" not in click_data or not click_data["points"]:
+        fig.update_layout(
+            title="Click a fill point in Chart 3 to inspect a client-order window",
+            xaxis_title="UTC time",
+            yaxis_title="Price",
+        )
+        return fig
+
+    point = click_data["points"][0]
+    customdata = point.get("customdata")
+    if not isinstance(customdata, list) or len(customdata) < 6:
+        fig.update_layout(
+            title="Select a fill marker in Chart 3 (not the mid-price line)",
+            xaxis_title="UTC time",
+            yaxis_title="Price",
+        )
+        return fig
+
+    client_order_key = str(customdata[5] or "")
+    if not client_order_key:
+        strategy_id = str(customdata[3] or "")
+        client_order_id = str(customdata[1] or "")
+        symbol = str(customdata[4] or "")
+        if strategy_id and client_order_id and symbol:
+            client_order_key = f"{strategy_id}:{client_order_id}:{symbol}"
+    windows = metrics.get("client_order_windows", {})
+    window = windows.get(client_order_key)
+    if not window:
+        fig.update_layout(
+            title=f"No lifecycle window found for {client_order_key or 'selected order'}",
+            xaxis_title="UTC time",
+            yaxis_title="Price",
+        )
+        return fig
+
+    start_time = pd.Timestamp(window["start_time_iso"])
+    end_time = pd.Timestamp(window["end_time_iso"])
+    x_start = start_time - pd.Timedelta(minutes=1)
+    x_end = end_time + pd.Timedelta(minutes=1)
+    order_price = pd.to_numeric(window.get("order_price"), errors="coerce")
+    if pd.notna(order_price) and float(order_price) > 0:
+        fig.add_trace(
+            go.Scatter(
+                x=[start_time, end_time],
+                y=[float(order_price), float(order_price)],
+                mode="lines",
+                name="order price",
+                line=dict(color="#2a9d8f", width=2.0, dash="dot"),
+                hovertemplate="Order price %{y:,.4f}<extra></extra>",
+            )
+        )
+
+    symbol = client_order_key.rsplit(":", 1)[-1] if ":" in client_order_key else str(customdata[4] or "")
+    day_keys = {x_start.strftime("%Y%m%d"), x_end.strftime("%Y%m%d")}
+    book_frames = [_load_book_series_for_day(str(STATE_DIR), symbol, key) for key in sorted(day_keys)]
+    book_frames = [frame for frame in book_frames if not frame.empty]
+    if book_frames:
+        book_all = pd.concat(book_frames, ignore_index=True).sort_values("event_time")
+        book_window = book_all[(book_all["event_time"] >= x_start) & (book_all["event_time"] <= x_end)]
+        if not book_window.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=book_window["event_time"],
+                    y=book_window["bid_price"],
+                    mode="lines",
+                    name="bid",
+                    line=dict(color="#1f77b4", width=1.8, shape="hv"),
+                    hovertemplate="Time %{x|%Y-%m-%d %H:%M:%S.%L}<br>Bid %{y:,.4f}<extra></extra>",
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=book_window["event_time"],
+                    y=book_window["ask_price"],
+                    mode="lines",
+                    name="ask",
+                    line=dict(color="#ef553b", width=1.8, shape="hv"),
+                    hovertemplate="Time %{x|%Y-%m-%d %H:%M:%S.%L}<br>Ask %{y:,.4f}<extra></extra>",
+                )
+            )
+
+    fills = []
+    for event in metrics.get("fill_events", []):
+        if event.get("client_order_key") != client_order_key:
+            continue
+        event_time = pd.Timestamp(event["event_time_iso"])
+        if x_start <= event_time <= x_end:
+            fills.append(event)
+    fills.sort(key=lambda item: item["event_time_iso"])
+    if fills:
+        fig.add_trace(
+            go.Scatter(
+                x=[pd.Timestamp(event["event_time_iso"]) for event in fills],
+                y=[float(event["executed_price"]) for event in fills],
+                mode="markers",
+                name="fills",
+                marker=dict(
+                    size=9,
+                    color="#111111",
+                    symbol=[_marker_symbol_for_side(event.get("side")) for event in fills],
+                ),
+                customdata=[[event.get("filled_qty", 0.0), event.get("side", "")] for event in fills],
+                hovertemplate=(
+                    "Time %{x|%Y-%m-%d %H:%M:%S.%L}<br>"
+                    "Executed %{y:,.4f}<br>"
+                    "Filled qty %{customdata[0]:,.6f}<br>"
+                    "Side %{customdata[1]}<extra></extra>"
+                ),
+            )
+        )
+
+    fig.update_layout(
+        title=(
+            f"Client-order window for {client_order_key}: "
+            f"{x_start.strftime('%Y-%m-%d %H:%M:%S')} to {x_end.strftime('%Y-%m-%d %H:%M:%S')}"
+        ),
+        xaxis_title="UTC time",
+        yaxis_title="Price",
+        margin=dict(t=50, b=40, l=40, r=20),
+    )
+    fig.update_xaxes(range=[x_start, x_end])
     return fig
 
 

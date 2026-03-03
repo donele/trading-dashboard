@@ -13,13 +13,19 @@ Last updated: 2026-03-02 (UTC)
   - Fill executed prices (points, colored by `client_order_id`).
   - Marker shape by side: `BID/BUY` up-triangle, `ASK/SELL` down-triangle.
   - Mid-price overlay from `log/state/*.csv` as step line (`hv`).
+- Plot 4: Client-order window for clicked fill marker in Plot 3:
+  - X-axis from `start_time - 1m` to `end_time + 1m`.
+  - Fill executed prices as markers.
+  - Bid/ask prices from state CSV as step lines (`hv`).
 
 ## Key Logic Decisions
 - Count new orders by unique `(strategy_id, client_order_id)` first, then bucket.
 - Count fills/notional only for statuses `PARTIAL_FILL` and `FILLED`.
 - Fill rows are only valid if a prior NEW exists for the same:
-  - `(strategy_id, client_order_id)` and
   - `(strategy_id, client_order_id, symbol)`.
+- Client-order lifecycle window key is `(strategy_id, client_order_id, symbol)`:
+  - Start time: first `NEW`.
+  - End time: last timestamp from any message type.
 - IDs normalized as strings end-to-end to avoid JS precision/type drift issues.
 
 ## Mid-Price Data Handling
@@ -38,8 +44,9 @@ Last updated: 2026-03-02 (UTC)
 - Marker size is zero for zero-value buckets where requested.
 
 ## Known Operational Notes
-- Running with Dash `debug=True` can fail in restricted env due to `/dev/shm` permission.
-- Safer for constrained environments: run with `debug=False`.
+- Current local default is `debug=True` for development convenience.
+- In restricted environments, Dash `debug=True` can fail due to `/dev/shm` permission limits.
+- If that occurs, run with `debug=False`.
 
 ## Git
 - Committed and pushed:

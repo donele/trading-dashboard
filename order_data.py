@@ -121,6 +121,7 @@ def load_latest_day_metrics(
     notional_by_bucket: dict[pd.Timestamp, float] = {}
     notional_by_key_bucket: dict[str, dict[pd.Timestamp, float]] = {}
     fill_events: list[dict[str, object]] = []
+    client_order_windows: dict[str, dict[str, object | None]] = {}
 
     for line in lines:
         ts = _extract_timestamp(line)
@@ -136,6 +137,25 @@ def load_latest_day_metrics(
         client_id = _normalize_id(payload.get("client_order_id"))
         strategy_id = _normalize_id(payload.get("strategy_id"))
         symbol = str(payload.get("symbol") or "UNKNOWN")
+        if client_id is not None and strategy_id is not None:
+            window_key = f"{strategy_id}:{client_id}:{symbol}"
+            window = client_order_windows.setdefault(window_key, {"start": None, "end": None, "order_price": None})
+            if action == "NEW":
+                start = window["start"]
+                order_price_raw = payload.get("price")
+                order_price: float | None
+                try:
+                    order_price = float(order_price_raw) if order_price_raw is not None else None
+                except (TypeError, ValueError):
+                    order_price = None
+                if start is None or ts < start:
+                    window["start"] = ts
+                    window["order_price"] = order_price
+                elif ts == start and window["order_price"] is None and order_price is not None:
+                    window["order_price"] = order_price
+            end = window["end"]
+            if end is None or ts > end:
+                window["end"] = ts
         if action == "NEW" and client_id is not None and strategy_id is not None:
             key = f"{strategy_id}:{client_id}"
             current = new_by_key.get(key)
@@ -153,12 +173,11 @@ def load_latest_day_metrics(
             if executed_price is None or filled_qty is None or strategy_id is None or client_id is None:
                 continue
 
-            client_key = f"{strategy_id}:{client_id}"
-            first_new_ts = new_by_key.get(client_key)
             symbol = str(payload.get("symbol") or "UNKNOWN")
             client_symbol_key = f"{strategy_id}:{client_id}:{symbol}"
             first_new_symbol_ts = new_by_key_symbol.get(client_symbol_key)
-            if first_new_ts is None or first_new_symbol_ts is None or ts < first_new_ts or ts < first_new_symbol_ts:
+            # Symbol-level NEW validation is sufficient; strategy/client NEW is implied.
+            if first_new_symbol_ts is None or ts < first_new_symbol_ts:
                 continue
 
             filled_qty_val = float(filled_qty)
@@ -180,6 +199,7 @@ def load_latest_day_metrics(
                     "strategy_id": strategy_id,
                     # Keep ids as strings to avoid JS precision loss and type drift.
                     "client_order_id": client_id,
+                    "client_order_key": client_symbol_key,
                     "side": str(payload.get("side") or payload.get("order_side") or "").upper(),
                     "executed_price": executed_price_val,
                     "filled_qty": filled_qty_val,
@@ -203,6 +223,19 @@ def load_latest_day_metrics(
         bucket_series = pd.Series(buckets, dtype=float).reindex(index, fill_value=0)
         bucket_notional_by_key[key] = bucket_series
         cumulative_notional_by_key[key] = bucket_series.cumsum()
+    client_order_windows_out = {}
+    for key, window in client_order_windows.items():
+        start = window["start"]
+        end = window["end"]
+        if start is None or end is None:
+            continue
+        client_order_windows_out[key] = {
+            "start_time_iso": pd.Timestamp(start).isoformat(),
+            "end_time_iso": pd.Timestamp(end).isoformat(),
+        }
+        order_price = window.get("order_price")
+        if isinstance(order_price, float):
+            client_order_windows_out[key]["order_price"] = order_price
 
     return {
         "date_iso": day_iso,
@@ -214,4 +247,5 @@ def load_latest_day_metrics(
         "bucket_notional_by_key": bucket_notional_by_key,
         "cumulative_notional_by_key": cumulative_notional_by_key,
         "fill_events": fill_events,
+        "client_order_windows": client_order_windows_out,
     }

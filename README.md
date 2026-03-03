@@ -9,6 +9,11 @@ Local Plotly Dash app for visualizing order activity from Binance US strategy lo
   - Fill executed prices in that 10-minute bucket (points grouped by `client_order_id`).
   - Marker shape by side: `BID/BUY` = triangle-up, `ASK/SELL` = triangle-down.
   - Mid-price overlay (`(bid+ask)/2`) from state CSV files.
+- **Chart 4** (client order window): Click a fill marker in Chart 3 to view:
+  - X-axis window from `start_time - 1 minute` to `end_time + 1 minute`.
+  - Start time = first `NEW` timestamp for `(strategy_id, client_order_id, symbol)`.
+  - End time = last timestamp of any message for that same key.
+  - Fill executed prices (markers) plus bid/ask step lines from state CSV files.
 
 ## Data Sources
 - Order logs directory (default):
@@ -25,7 +30,6 @@ Local Plotly Dash app for visualizing order activity from Binance US strategy lo
   - `PARTIAL_FILL`
   - `FILLED`
 - Fill rows are counted only if a prior `NEW` exists for the same:
-  - `(strategy_id, client_order_id)` and
   - `(strategy_id, client_order_id, symbol)`
 - IDs are normalized to strings to avoid precision/type issues in browser callbacks.
 
