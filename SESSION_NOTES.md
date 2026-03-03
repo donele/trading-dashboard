@@ -1,6 +1,6 @@
 # Session Notes
 
-Last updated: 2026-03-02 (UTC)
+Last updated: 2026-03-03 (UTC)
 
 ## Scope
 - Built and refined a local Dash dashboard for Binance US order logs.
@@ -13,10 +13,13 @@ Last updated: 2026-03-02 (UTC)
   - Fill executed prices (points, colored by `client_order_id`).
   - Marker shape by side: `BID/BUY` up-triangle, `ASK/SELL` down-triangle.
   - Mid-price overlay from `log/state/*.csv` as step line (`hv`).
+  - Mid-price line width reduced to improve visibility of fill-side triangle markers.
 - Plot 4: Client-order window for clicked fill marker in Plot 3:
+  - Triggered by click on a fill marker in Plot 3.
   - X-axis from `start_time - 1m` to `end_time + 1m`.
   - Fill executed prices as markers.
   - Bid/ask prices from state CSV as step lines (`hv`).
+  - Order price from initial `NEW` shown as a horizontal line from order start to order end.
 
 ## Key Logic Decisions
 - Count new orders by unique `(strategy_id, client_order_id)` first, then bucket.
@@ -50,8 +53,8 @@ Last updated: 2026-03-02 (UTC)
 
 ## Git
 - Committed and pushed:
-  - Commit: `ddee67f`
-  - Message: `Enhance dashboards with drilldown, mid-price overlay, and ID-safe parsing`
+  - Commit: `0cf3f13`
+  - Message: `Add client order lifecycle chart with order price overlay`
 
 ## Useful Commands
 - Run app:
