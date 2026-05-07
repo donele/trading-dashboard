@@ -1,22 +1,23 @@
 # trading-ui
 
-Monorepo for UI dashboards used in trading workflows.
+Collection of independent dashboards for feed monitoring and trading simulation.
 
-## Repository Layout
+## Dashboards
 
-- `feed_daily/`: Daily feed dashboard.
-- `feed_live/`: Live feed monitor dashboard.
-- `trade_sim/`: Trading simulation dashboard.
-- `trade_livesim/`: Trading dashboard using live feed with simulated execution.
+- `feed_daily`: Daily static market-data stats dashboard.
+- `feed_live`: Live feed monitor from shared memory.
+- `trade_sim`: Simulation dashboard for dump/livesim/tradesim heads.
+- `trade_livesim`: Trade activity dashboard using live-feed strategy logs with simulated execution.
 
-## Getting Started
+## Quick Start
 
-Each dashboard is managed independently and has its own dependencies and run instructions:
+```bash
+cd /home/jdlee/repos/trading-ui
+```
 
-1. Read [feed_live/README.md](/home/jdlee/repos/trading-ui/feed_live/README.md)
-2. Read [trade_sim/README.md](/home/jdlee/repos/trading-ui/trade_sim/README.md)
+Each dashboard is run independently from its own directory and dependency set.
 
-## Notes
-
-- Install dependencies from each subproject's `requirements.txt`.
-- Run each app from its own directory unless its README states otherwise.
+- [feed_daily/README.md](/home/jdlee/repos/trading-ui/feed_daily/README.md)
+- [feed_live/README.md](/home/jdlee/repos/trading-ui/feed_live/README.md)
+- [trade_sim/README.md](/home/jdlee/repos/trading-ui/trade_sim/README.md)
+- [trade_livesim/README.md](/home/jdlee/repos/trading-ui/trade_livesim/README.md)

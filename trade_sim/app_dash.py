@@ -14,9 +14,9 @@ from dash import Input, Output, dcc, html
 from plotly.subplots import make_subplots
 
 try:
-    from trade_sim.app2 import SimData
+    from trade_sim.app import SimData
 except ImportError:  # pragma: no cover
-    from app2 import SimData
+    from app import SimData
 
 
 ROOT_ORDER = ("dumpsim", "livesim", "tradesim")

@@ -1,9 +1,6 @@
-# Simulation Dashboard
+# trade_sim
 
-Dash app to browse simulation heads and visualize:
-
-- `bid`/`ask` from `log/state/*.parquet`
-- order price lines from `log/order.????????.{parquet,log}` grouped by `client_order_id`
+Dash dashboard for simulation runs and order/state analysis.
 
 ## Run
 
@@ -12,30 +9,24 @@ cd /home/jdlee/repos/trading-ui/trade_sim
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python3 app.py
+python3 app_dash.py
 ```
 
-Open `http://127.0.0.1:8050`.
+Open `http://127.0.0.1:8051/`.
 
-## SimData Dashboard
+## Configuration
 
-The second dashboard variant uses `SimData` from `app2.py` and Plotly Dash:
+- `DASH2_PORT`: override default port `8051`.
 
-```bash
-python3 app2_dash.py
-```
+## Data Roots
 
-It defaults to `http://127.0.0.1:8051` and can be overridden with `DASH2_PORT`.
-
-## Data roots
-
-The app scans:
+The dashboard scans:
 
 - `~/workspace/sgt/dumpsim`
 - `~/workspace/sgt/livesim`
 - `~/workspace/sgt/tradesim`
 
-Each head directory must contain:
+Each head directory should contain:
 
 - `log/state/`
-- at least one `log/order.????????.log`
+- one or more `log/order.????????.{log,parquet}` files.
