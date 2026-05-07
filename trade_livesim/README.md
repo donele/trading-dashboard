@@ -10,7 +10,7 @@ python3 -m pip install -e .
 python3 -m trade_livesim
 ```
 
-Open `http://127.0.0.1:8050/`.
+Open `http://127.0.0.1:8060/`.
 
 ## Configuration
 

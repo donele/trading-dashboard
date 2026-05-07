@@ -11,11 +11,11 @@ python3 -m feed_live \
   --pathname <shm-pathname> \
   --refdata <path-to-refdata>/refdata.latest.json \
   --host 127.0.0.1 \
-  --port 8060 \
+  --port 8010 \
   --title "Feed Live Monitor"
 ```
 
-Open `http://127.0.0.1:8060/`.
+Open `http://127.0.0.1:8010/`.
 
 ## CLI Tools
 

@@ -10,11 +10,11 @@ python3 -m pip install -e .
 python3 -m trade_sim
 ```
 
-Open `http://127.0.0.1:8051/`.
+Open `http://127.0.0.1:8050/`.
 
 ## Configuration
 
-- `DASH2_PORT`: override default port `8051`.
+- `DASH2_PORT`: override default port `8050`.
 
 ## Data Roots
 

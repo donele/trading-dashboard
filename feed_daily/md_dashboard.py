@@ -124,7 +124,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--port",
         type=int,
-        default=8000,
+        default=8020,
         help="Port to bind when using --serve",
     )
     parser.add_argument(

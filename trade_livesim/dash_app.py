@@ -508,7 +508,7 @@ def update_client_order_window(click_data, metrics):
 
 def main() -> int:
     host = os.getenv("TRADE_LIVESIM_HOST", "127.0.0.1")
-    port = int(os.getenv("TRADE_LIVESIM_PORT", "8050"))
+    port = int(os.getenv("TRADE_LIVESIM_PORT", "8060"))
     debug = os.getenv("TRADE_LIVESIM_DEBUG", "1").lower() in ("1", "true", "yes", "on")
     app.run(debug=debug, host=host, port=port)
     return 0
