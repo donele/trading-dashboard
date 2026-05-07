@@ -8,7 +8,7 @@ Dash app to browse simulation heads and visualize:
 ## Run
 
 ```bash
-cd /home/jdlee/repos/simulation-dashboard
+cd /home/jdlee/repos/trading-ui/trade_sim
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -22,7 +22,7 @@ Open `http://127.0.0.1:8050`.
 The second dashboard variant uses `SimData` from `app2.py` and Plotly Dash:
 
 ```bash
-python3 sim_dashboard/app2_dash.py
+python3 app2_dash.py
 ```
 
 It defaults to `http://127.0.0.1:8051` and can be overridden with `DASH2_PORT`.

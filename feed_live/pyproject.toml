@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "feed-monitor"
+version = "0.1.0"
+description = "Dash-based monitoring dashboard for SGT shared-memory market data"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "dash>=2.18",
+  "plotly>=5.24",
+]
+
+[project.scripts]
+sgt-shm-dash = "dashboard.shm_dash_app:main"
+sgt-shm-reader = "dashboard.shm_direct_price_reader:main"
+
+[tool.setuptools]
+packages = ["dashboard"]

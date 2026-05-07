@@ -14,7 +14,7 @@ from dash import Input, Output, dcc, html
 from plotly.subplots import make_subplots
 
 try:
-    from sim_dashboard.app2 import SimData
+    from trade_sim.app2 import SimData
 except ImportError:  # pragma: no cover
     from app2 import SimData
 
