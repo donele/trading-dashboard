@@ -1,4 +1,4 @@
-from dashboard.shm_dash_app import StreamState, _ts_to_plot_datetime, _window_points, _window_trades
+from feed_live.shm_dash_app import StreamState, _ts_to_plot_datetime, _window_points, _window_trades
 
 
 def test_stream_state_symbol_cache_only_changes_for_new_symbols() -> None:

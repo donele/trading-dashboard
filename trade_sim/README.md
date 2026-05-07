@@ -5,11 +5,9 @@ Dash dashboard for simulation runs and order/state analysis.
 ## Run
 
 ```bash
-cd /home/jdlee/repos/trading-ui/trade_sim
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python3 app_dash.py
+cd /home/jdlee/repos/trading-ui
+python3 -m pip install -e .
+python3 -m trade_sim
 ```
 
 Open `http://127.0.0.1:8051/`.

@@ -9,7 +9,10 @@ import plotly.graph_objs as go
 from plotly.colors import qualitative
 import pandas as pd
 
-from order_data import DEFAULT_INTERVAL_MINUTES, load_latest_day_metrics
+try:
+    from .order_data import DEFAULT_INTERVAL_MINUTES, load_latest_day_metrics
+except ImportError:  # pragma: no cover
+    from order_data import DEFAULT_INTERVAL_MINUTES, load_latest_day_metrics
 
 LOG_DIR = Path(os.getenv("ORDER_LOG_DIR", "/home/jdlee/workspace/sgt/livesim/binance_us/log"))
 STATE_DIR = Path(os.getenv("STATE_CSV_DIR", str(LOG_DIR / "state")))

@@ -13,9 +13,17 @@ Collection of independent dashboards for feed monitoring and trading simulation.
 
 ```bash
 cd /home/jdlee/repos/trading-ui
+python3 -m pip install -e .
 ```
 
-Each dashboard is run independently from its own directory and dependency set.
+Start dashboards from the repository root:
+
+```bash
+python3 -m feed_daily
+python3 -m feed_live --pathname <shm-pathname> --refdata <refdata-json>
+python3 -m trade_sim
+python3 -m trade_livesim
+```
 
 - [feed_daily/README.md](/home/jdlee/repos/trading-ui/feed_daily/README.md)
 - [feed_live/README.md](/home/jdlee/repos/trading-ui/feed_live/README.md)

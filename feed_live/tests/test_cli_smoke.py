@@ -15,12 +15,12 @@ def _run(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_dash_help_exits_zero() -> None:
-    proc = _run("-m", "dashboard.shm_dash_app", "--help")
+    proc = _run("-m", "feed_live.shm_dash_app", "--help")
     assert proc.returncode == 0, proc.stderr
     assert "Dash app for live SHM prices" in proc.stdout
 
 
 def test_reader_help_exits_zero() -> None:
-    proc = _run("-m", "dashboard.shm_direct_price_reader", "--help")
+    proc = _run("-m", "feed_live.shm_direct_price_reader", "--help")
     assert proc.returncode == 0, proc.stderr
     assert "Direct Python SHM price reader" in proc.stdout

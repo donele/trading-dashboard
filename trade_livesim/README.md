@@ -5,11 +5,9 @@ Dash dashboard for live-feed trading logs with simulated execution.
 ## Run
 
 ```bash
-cd /home/jdlee/repos/trading-ui/trade_livesim
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python3 dash_app.py
+cd /home/jdlee/repos/trading-ui
+python3 -m pip install -e .
+python3 -m trade_livesim
 ```
 
 Open `http://127.0.0.1:8050/`.
@@ -22,7 +20,7 @@ Open `http://127.0.0.1:8050/`.
 Example:
 
 ```bash
-ORDER_LOG_DIR=/path/to/log STATE_CSV_DIR=/path/to/state python3 dash_app.py
+ORDER_LOG_DIR=/path/to/log STATE_CSV_DIR=/path/to/state python3 -m trade_livesim
 ```
 
 ## Data Expectations

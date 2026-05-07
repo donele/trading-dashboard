@@ -1,6 +1,6 @@
 import json
 
-from dashboard.shm_direct_price_reader import load_symbol_map
+from feed_live.shm_direct_price_reader import load_symbol_map
 
 
 def test_load_symbol_map_includes_contract_multiplier(tmp_path) -> None:

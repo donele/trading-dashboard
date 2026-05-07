@@ -2,17 +2,12 @@
 
 Dash dashboard for live market feed monitoring from SGT shared memory.
 
-## Install
-
-```bash
-cd /home/jdlee/repos/trading-ui/feed_live
-python3 -m pip install -e .
-```
-
 ## Run
 
 ```bash
-sgt-shm-dash \
+cd /home/jdlee/repos/trading-ui
+python3 -m pip install -e .
+python3 -m feed_live \
   --pathname <shm-pathname> \
   --refdata <path-to-refdata>/refdata.latest.json \
   --host 127.0.0.1 \
@@ -24,8 +19,8 @@ Open `http://127.0.0.1:8060/`.
 
 ## CLI Tools
 
-- `sgt-shm-dash`: live dashboard app.
-- `sgt-shm-reader`: direct shared-memory stream reader.
+- `python3 -m feed_live`: live dashboard app.
+- `python3 -m feed_live.shm_direct_price_reader`: direct shared-memory stream reader.
 
 ## Test
 
