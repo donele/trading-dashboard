@@ -1,4 +1,4 @@
-from .app_dash import main
+from .dash_app import main
 
 
 if __name__ == "__main__":
