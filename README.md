@@ -20,7 +20,7 @@ Start dashboards from the repository root:
 
 ```bash
 python3 -m feed_daily
-python3 -m feed_live --pathname <shm-pathname> --refdata <refdata-json>
+python3 -m feed_live
 python3 -m trade_sim
 python3 -m trade_livesim
 ```

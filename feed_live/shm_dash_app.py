@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import logging
 from bisect import bisect_left
 import json
 import math
@@ -612,6 +613,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _on_sigterm)
 
     app = build_app(state, args.title)
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
     app.run(host=args.host, port=args.port, debug=False)
     return 0
 
