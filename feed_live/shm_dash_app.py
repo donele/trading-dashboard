@@ -212,6 +212,17 @@ class ReaderProcess:
             bufsize=1,
         )
 
+        # Fail fast on startup errors (e.g. missing SHM segment) instead of
+        # running a dashboard with a dead reader process.
+        time.sleep(0.2)
+        rc = self.proc.poll()
+        if rc is not None:
+            _stdout, stderr_text = self.proc.communicate(timeout=1)
+            err = (stderr_text or "").strip()
+            if err:
+                raise RuntimeError(f"reader process exited during startup (rc={rc}): {err}")
+            raise RuntimeError(f"reader process exited during startup (rc={rc})")
+
         self.thread = threading.Thread(target=self._consume_stdout, daemon=True)
         self.thread.start()
         threading.Thread(target=self._consume_stderr, daemon=True).start()
@@ -559,8 +570,8 @@ def build_app(state: StreamState, title: str) -> Dash:
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Dash app for live SHM prices")
-    ap.add_argument("--pathname", default="/node_data/shm/datashm")
-    ap.add_argument("--refdata", default=None)
+    ap.add_argument("--pathname", default="/var/lib/sgt/shm/datashm")
+    ap.add_argument("--refdata", default="/var/lib/sgt/refdata/refdata.json")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8010)
     ap.add_argument("--sleep-ms", type=float, default=1.0, help="reader polling sleep")
