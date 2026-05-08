@@ -574,7 +574,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--pathname", default="/var/lib/sgt/shm/datashm")
     ap.add_argument("--refdata", default="/var/lib/sgt/refdata/refdata.json")
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=8010)
+    ap.add_argument("--port", type=int, default=8020)
     ap.add_argument("--sleep-ms", type=float, default=1.0, help="reader polling sleep")
     ap.add_argument("--window-sec", type=float, default=60.0, help="rolling display window in seconds")
     ap.add_argument("--retention-sec", type=float, default=600.0, help="in-memory retention for pruning")

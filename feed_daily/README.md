@@ -24,10 +24,10 @@ python3 -m feed_daily \
   --stats-root /mnt/bigdata2/Ferris/stats \
   --output-root /tmp/feed_daily_dashboard \
   --host 127.0.0.1 \
-  --port 8020
+  --port 8030
 ```
 
-Open `http://127.0.0.1:8020/`.
+Open `http://127.0.0.1:8030/`.
 
 ## Notes
 

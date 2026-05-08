@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 from collections import defaultdict
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote
@@ -21,6 +22,7 @@ except ImportError:  # pragma: no cover
 
 ROOT_ORDER = ("dumpsim", "livesim", "tradesim")
 ROOTS = [Path.home() / "workspace" / "sgt" / name for name in ROOT_ORDER]
+DISCOVERY_WINDOW_HOURS: int | None = None
 
 
 def normalize_head(head: str) -> Path | None:
@@ -79,8 +81,32 @@ def order_parquet_dates_for_head(head: Path) -> set[str]:
     return dates
 
 
-def discover_heads() -> dict[str, list[Path]]:
+def _head_last_update_ts(head: Path) -> float:
+    log_dir = head / "log"
+    mtimes: list[float] = []
+    if log_dir.is_dir():
+        for path in log_dir.glob("order.????????.parquet"):
+            try:
+                mtimes.append(path.stat().st_mtime)
+            except FileNotFoundError:
+                continue
+        state_dir = log_dir / "state"
+        if state_dir.is_dir():
+            for path in state_dir.glob("*.parquet"):
+                try:
+                    mtimes.append(path.stat().st_mtime)
+                except FileNotFoundError:
+                    continue
+    if mtimes:
+        return max(mtimes)
+    return head.stat().st_mtime
+
+
+def discover_heads(window_hours: int | None = None) -> dict[str, list[Path]]:
     grouped: dict[str, list[Path]] = {name: [] for name in ROOT_ORDER}
+    cutoff_ts: float | None = None
+    if window_hours is not None:
+        cutoff_ts = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).timestamp()
     for root_name, root in zip(ROOT_ORDER, ROOTS):
         if not root.exists():
             continue
@@ -94,6 +120,8 @@ def discover_heads() -> dict[str, list[Path]]:
                 continue
             head = log_dir.parent
             if not state_files_for_head(head):
+                continue
+            if cutoff_ts is not None and _head_last_update_ts(head) < cutoff_ts:
                 continue
             grouped[root_name].append(head)
         grouped[root_name].sort(
@@ -808,7 +836,7 @@ def render_stats(search: str) -> html.Div:
 
 
 def render_index() -> html.Div:
-    grouped = discover_heads()
+    grouped = discover_heads(window_hours=DISCOVERY_WINDOW_HOURS)
     blocks = []
     for root_name, heads in grouped.items():
         if not heads:
@@ -1040,7 +1068,26 @@ def route(pathname: str | None, search: str | None):
     return render_index()
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Trade simulation dashboard")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("-d", action="store_true", help="Show heads updated in last 24 hours")
+    group.add_argument("-w", action="store_true", help="Show heads updated in last 7 days")
+    group.add_argument("-m", action="store_true", help="Show heads updated in last 30 days")
+    return parser.parse_args()
+
+
 def main() -> int:
+    global DISCOVERY_WINDOW_HOURS
+    args = parse_args()
+    if args.d:
+        DISCOVERY_WINDOW_HOURS = 24
+    elif args.w:
+        DISCOVERY_WINDOW_HOURS = 24 * 7
+    elif args.m:
+        DISCOVERY_WINDOW_HOURS = 24 * 30
+    else:
+        DISCOVERY_WINDOW_HOURS = None
     host = os.getenv("DASH2_HOST", "127.0.0.1")
     port = int(os.getenv("DASH2_PORT", "8050"))
     debug = os.getenv("DASH2_DEBUG", "1").lower() in ("1", "true", "yes", "on")

@@ -5,7 +5,7 @@ Dash dashboard for simulation runs and order/state analysis.
 ## Run
 
 ```bash
-cd /home/jdlee/repos/trading-ui
+cd /home/jdlee/repos/trading-dashboard
 python3 -m pip install -e .
 python3 -m trade_sim
 ```
@@ -15,6 +15,9 @@ Open `http://127.0.0.1:8050/`.
 ## Configuration
 
 - `DASH2_PORT`: override default port `8050`.
+- `-d`: show only heads updated in the last 24 hours.
+- `-w`: show only heads updated in the last 7 days.
+- `-m`: show only heads updated in the last 30 days.
 
 ## Data Roots
 

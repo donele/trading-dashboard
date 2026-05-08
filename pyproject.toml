@@ -21,9 +21,10 @@ feed-live = "feed_live.__main__:main"
 feed-daily = "feed_daily.__main__:main"
 trade-sim = "trade_sim.__main__:main"
 trade-livesim = "trade_livesim.__main__:main"
+algo-docs = "algo_docs.__main__:main"
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["feed_daily", "feed_live", "feed_live.*", "trade_sim", "trade_livesim"]
+include = ["algo_docs", "feed_daily", "feed_live", "feed_live.*", "trade_sim", "trade_livesim"]

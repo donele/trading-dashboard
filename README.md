@@ -8,6 +8,7 @@ Collection of independent dashboards for feed monitoring and trading simulation.
 - `feed_live`: Live feed monitor from shared memory.
 - `trade_sim`: Simulation dashboard for dump/livesim/tradesim heads.
 - `trade_livesim`: Trade activity dashboard using live-feed strategy logs with simulated execution.
+- `algo_docs`: Builds MkDocs from `~/repos/sgt` into `~/repos/sgt/site` and serves it.
 
 ## Quick Start
 
@@ -23,6 +24,7 @@ python3 -m feed_daily
 python3 -m feed_live
 python3 -m trade_sim
 python3 -m trade_livesim
+python3 -m algo_docs
 ```
 
 - [feed_daily/README.md](/home/jdlee/repos/trading-ui/feed_daily/README.md)
