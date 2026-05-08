@@ -35,6 +35,7 @@ Open `http://127.0.0.1:8020/`.
 - Watch mode is enabled by default while serving.
 - Use `--no-watch` to disable periodic rebuild checks.
 - Default watch interval is 10 minutes (`--watch-interval 600`).
+- Default output root is `/tmp/feed_daily_dashboard` when `--output-root` is omitted.
 
 Example:
 

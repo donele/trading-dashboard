@@ -38,7 +38,7 @@ from typing import Iterable
 
 
 DEFAULT_STATS_ROOT = "/mnt/bigdata2/Ferris/daily_stats"
-DEFAULT_OUTPUT_ROOT = "./md_dashboard_site"
+DEFAULT_OUTPUT_ROOT = "/tmp/feed_daily_dashboard"
 
 
 @dataclass(frozen=True)
