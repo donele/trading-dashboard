@@ -25,6 +25,8 @@ import csv
 import datetime as dt
 import html
 import json
+import threading
+import time
 import os
 import math
 import shutil
@@ -111,10 +113,18 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_OUTPUT_ROOT,
         help="Directory where the HTML dashboard will be written",
     )
+    parser.set_defaults(serve=True)
     parser.add_argument(
         "--serve",
+        dest="serve",
         action="store_true",
-        help="Serve the generated dashboard with a local http.server after building",
+        help="Serve the generated dashboard with a local http.server after building (default: enabled)",
+    )
+    parser.add_argument(
+        "--no-serve",
+        dest="serve",
+        action="store_false",
+        help="Build dashboard and exit without serving",
     )
     parser.add_argument(
         "--host",
@@ -131,6 +141,25 @@ def parse_args() -> argparse.Namespace:
         "--no-clean",
         action="store_true",
         help="Do not remove the output directory before rebuilding",
+    )
+    parser.set_defaults(watch=True)
+    parser.add_argument(
+        "--watch",
+        dest="watch",
+        action="store_true",
+        help="Watch stats input and rebuild periodically while serving (default: enabled)",
+    )
+    parser.add_argument(
+        "--no-watch",
+        dest="watch",
+        action="store_false",
+        help="Disable watch mode and serve static output without periodic rebuilds",
+    )
+    parser.add_argument(
+        "--watch-interval",
+        type=int,
+        default=600,
+        help="Watch polling interval in seconds (default: 600, i.e. 10 minutes)",
     )
     return parser.parse_args()
 
@@ -704,12 +733,52 @@ def build_dashboard(stats_root: Path, output_root: Path, clean: bool) -> list[Da
     return days
 
 
-def serve(output_root: Path, host: str, port: int) -> None:
-    from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-    import os
+def _stats_fingerprint(stats_root: Path) -> tuple[int, int, int]:
+    total_size = 0
+    latest_mtime_ns = 0
+    count = 0
+    if not stats_root.exists():
+        return (0, 0, 0)
+    for path in stats_root.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.suffix not in {".csv", ".json"}:
+            continue
+        st = path.stat()
+        total_size += st.st_size
+        latest_mtime_ns = max(latest_mtime_ns, st.st_mtime_ns)
+        count += 1
+    return (count, total_size, latest_mtime_ns)
 
-    os.chdir(output_root)
-    server = ThreadingHTTPServer((host, port), SimpleHTTPRequestHandler)
+
+def _watch_and_rebuild(stats_root: Path, output_root: Path, interval_sec: int) -> None:
+    interval_sec = max(1, interval_sec)
+    last = _stats_fingerprint(stats_root)
+    print(
+        f"[watch] enabled interval={interval_sec}s baseline files={last[0]} size={last[1]}",
+        file=sys.stderr,
+    )
+    while True:
+        time.sleep(interval_sec)
+        now = _stats_fingerprint(stats_root)
+        if now == last:
+            print("[watch] no input change", file=sys.stderr)
+            continue
+        print("[watch] change detected, rebuilding dashboard...", file=sys.stderr)
+        try:
+            build_dashboard(stats_root, output_root, clean=False)
+            last = now
+            print("[watch] rebuild complete", file=sys.stderr)
+        except Exception as exc:
+            print(f"[watch] rebuild failed: {exc}", file=sys.stderr)
+
+
+def serve(output_root: Path, host: str, port: int) -> None:
+    from functools import partial
+    from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+
+    handler = partial(SimpleHTTPRequestHandler, directory=str(output_root))
+    server = ThreadingHTTPServer((host, port), handler)
     print(f"Serving {output_root} on http://{host}:{port}", file=sys.stderr)
     try:
         server.serve_forever()
@@ -722,6 +791,14 @@ def main() -> int:
     stats_root = Path(args.stats_root)
     output_root = Path(args.output_root)
     build_dashboard(stats_root, output_root, clean=not args.no_clean)
+    if args.watch and not args.serve:
+        raise SystemExit("--watch requires serving; use default serve mode or remove --no-serve")
+    if args.watch:
+        threading.Thread(
+            target=_watch_and_rebuild,
+            args=(stats_root, output_root, args.watch_interval),
+            daemon=True,
+        ).start()
     if args.serve:
         serve(output_root, args.host, args.port)
     return 0
