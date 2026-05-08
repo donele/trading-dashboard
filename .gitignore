@@ -1,1 +1,4 @@
 .codex
+*.pyc
+*.egg-info/
+__pycache__/
