@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+import json
 import os
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote
@@ -11,7 +12,7 @@ from urllib.parse import parse_qs, quote, unquote
 import dash
 import pandas as pd
 import plotly.graph_objects as go
-from dash import Input, Output, dcc, html
+from dash import Input, Output, State, dcc, html, no_update
 from plotly.subplots import make_subplots
 
 try:
@@ -23,6 +24,11 @@ except ImportError:  # pragma: no cover
 ROOT_ORDER = ("dumpsim", "livesim", "tradesim")
 ROOTS = [Path.home() / "workspace" / "sgt" / name for name in ROOT_ORDER]
 DISCOVERY_WINDOW_HOURS: int | None = None
+INDEX_SUMMARY_CACHE_PATH = Path("/tmp/trade_sim_index_summary_cache.json")
+_INDEX_SUMMARY_CACHE: dict[str, dict[str, float]] | None = None
+ALL_SYMBOLS_VALUE = "__all_symbols__"
+ALL_DATES_VALUE = "__all_dates__"
+ALL_HOURS_VALUE = "__all_hours__"
 
 
 def normalize_head(head: str) -> Path | None:
@@ -140,6 +146,126 @@ def _safe_series(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.Series(dtype=float)
 
 
+def _head_symbols_for_nav(head: Path) -> list[str]:
+    return sorted({row["symbol"] for row in state_files_for_head(head)})
+
+
+def _head_dates_for_nav(head: Path, symbol: str | None = None) -> list[str]:
+    rows = state_files_for_head(head)
+    if symbol and symbol != ALL_SYMBOLS_VALUE:
+        rows = [row for row in rows if row["symbol"] == symbol]
+    return sorted({row["date"] for row in rows})
+
+
+def _make_head_nav(
+    head: Path,
+    pathname: str,
+    symbol: str | None,
+    date: str | None,
+    hour: str | None = None,
+) -> html.Div:
+    symbol_value = symbol if symbol else ALL_SYMBOLS_VALUE
+    date_value = date if date else ALL_DATES_VALUE
+    hour_value = hour if hour else ALL_HOURS_VALUE
+    show_hour = pathname in ("/symbol", "/chart")
+    symbol_options = [{"label": "All Symbols", "value": ALL_SYMBOLS_VALUE}]
+    symbol_options.extend({"label": sym, "value": sym} for sym in _head_symbols_for_nav(head))
+    date_options = [{"label": "All Dates", "value": ALL_DATES_VALUE}]
+    date_options.extend({"label": d, "value": d} for d in _head_dates_for_nav(head, symbol))
+    hour_options = [{"label": "All Hours", "value": ALL_HOURS_VALUE}]
+    hour_options.extend({"label": f"{h:02d}", "value": f"{h:02d}"} for h in range(24))
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.A("Home", href="/", style={"marginRight": "12px"}),
+                    html.Span(str(head), style={"fontWeight": "600"}),
+                ],
+                style={"marginBottom": "8px"},
+            ),
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Div("Symbol", style={"fontSize": "11px", "marginBottom": "2px"}),
+                            dcc.Dropdown(
+                                id="symbol-nav-dropdown",
+                                options=symbol_options,
+                                value=symbol_value,
+                                clearable=False,
+                                searchable=True,
+                            ),
+                        ],
+                        style={"flex": "1 1 320px", "minWidth": "220px"},
+                    ),
+                    html.Div(
+                        [
+                            html.Div("Date", style={"fontSize": "11px", "marginBottom": "2px"}),
+                            dcc.Dropdown(
+                                id="date-nav-dropdown",
+                                options=date_options,
+                                value=date_value,
+                                clearable=False,
+                                searchable=True,
+                            ),
+                        ],
+                        style={"flex": "1 1 320px", "minWidth": "220px"},
+                    ),
+                    html.Div(
+                        [
+                            html.Div("Hour", style={"fontSize": "11px", "marginBottom": "2px"}),
+                            dcc.Dropdown(
+                                id="hour-nav-dropdown",
+                                options=hour_options,
+                                value=hour_value,
+                                clearable=False,
+                                searchable=True,
+                            ),
+                        ],
+                        style={
+                            "flex": "0 1 220px",
+                            "minWidth": "160px",
+                            "display": "block" if show_hour else "none",
+                        },
+                    ),
+                ],
+                style={"display": "flex", "gap": "12px", "flexWrap": "wrap", "alignItems": "flex-end"},
+            ),
+        ],
+        style={"marginBottom": "12px"},
+    )
+
+
+def _nav_target(pathname: str | None, head: Path, symbol: str | None, date: str | None, hour: str | None = None) -> tuple[str, str]:
+    head_q = quote(str(head))
+    symbol_value = symbol if symbol else ALL_SYMBOLS_VALUE
+    date_value = date if date else ALL_DATES_VALUE
+    hour_value = hour if hour else ALL_HOURS_VALUE
+    if date_value == ALL_DATES_VALUE:
+        search = f"?head={head_q}"
+        if symbol_value != ALL_SYMBOLS_VALUE:
+            search += f"&symbol={quote(symbol_value)}"
+        return "/stats", search
+    if symbol_value == ALL_SYMBOLS_VALUE:
+        return "/portfolio", f"?head={head_q}&date={quote(date_value)}"
+    if pathname == "/chart":
+        search = f"?head={head_q}&symbol={quote(symbol_value)}&date={quote(date_value)}"
+        if hour_value != ALL_HOURS_VALUE:
+            search += f"&hour={quote(hour_value)}"
+        return "/chart", search
+    if pathname == "/symbol":
+        search = f"?head={head_q}&symbol={quote(symbol_value)}&date={quote(date_value)}"
+        if hour_value != ALL_HOURS_VALUE:
+            search += f"&hour={quote(hour_value)}"
+        return "/symbol", search
+    return "/symbol", f"?head={head_q}&symbol={quote(symbol_value)}&date={quote(date_value)}"
+
+
+def _nav_href(pathname: str | None, head: Path, symbol: str | None, date: str | None, hour: str | None = None) -> str:
+    path, search = _nav_target(pathname, head, symbol, date, hour)
+    return f"{path}{search}"
+
+
 def _format_num(value: float | int | None, digits: int = 2) -> str:
     if value is None or pd.isna(value):
         return "-"
@@ -200,7 +326,10 @@ def _return_series_stats(returns: pd.Series, periods_per_year: float = 1.0) -> d
     }
 
 
-def _make_stats_table(rows: list[tuple[str, str]]) -> html.Div:
+def _make_stats_table(rows: list[tuple[str, str]], *, compact: bool = False) -> html.Div:
+    label_padding = "2px 4px 2px 0" if compact else "4px 6px 4px 0"
+    value_padding = "2px 0 2px 4px" if compact else "4px 0 4px 6px"
+    table_width = "100%" if compact else "min(560px, 100%)"
     return html.Div(
         html.Table(
             [
@@ -208,8 +337,8 @@ def _make_stats_table(rows: list[tuple[str, str]]) -> html.Div:
                     [
                         html.Tr(
                             [
-                                html.Th(label, style={"textAlign": "left", "padding": "6px 10px", "borderBottom": "1px solid #e5e7eb"}),
-                                html.Td(value, style={"textAlign": "right", "padding": "6px 10px", "borderBottom": "1px solid #e5e7eb"}),
+                                html.Th(label, style={"textAlign": "left", "padding": label_padding, "borderBottom": "1px solid #e5e7eb"}),
+                                html.Td(value, style={"textAlign": "right", "padding": value_padding, "borderBottom": "1px solid #e5e7eb"}),
                             ]
                         )
                         for label, value in rows
@@ -218,7 +347,7 @@ def _make_stats_table(rows: list[tuple[str, str]]) -> html.Div:
             ],
             style={"width": "100%", "borderCollapse": "collapse"},
         ),
-        style={"width": "min(560px, 100%)", "marginBottom": "12px"},
+        style={"width": table_width, "marginBottom": "8px"},
     )
 
 
@@ -245,30 +374,48 @@ def _make_step_trace(
 
 def make_symbol_figure(simdata: SimData, symbol: str, sdate: str, freq: str = "5min") -> go.Figure:
     timeline = simdata.get_timeline(symbol, sdate, freq=freq)
+    asymmetry = _buy_sell_notional_asymmetry(simdata, sdate, freq=freq, symbol=symbol, index=timeline.index)
     fig = make_subplots(
-        rows=6,
+        rows=8,
         cols=1,
         shared_xaxes=True,
         vertical_spacing=0.04,
-        subplot_titles=("Size Traded", "Notional Traded", "Notional Position", "Mid", "PnL", "Fees"),
+        subplot_titles=(
+            "Size Traded",
+            "Notional Traded",
+            "Buy/Sell NTL Asymmetry",
+            "Notional Position",
+            "Mid",
+            "PnL",
+            "Fees",
+            "Funding Rate",
+        ),
     )
     series = [
         ("size_traded", "#0F766E"),
         ("notional_traded", "#2563EB"),
+        ("buy_sell_ntl_asymmetry", "#111827"),
         ("notional_pos", "#C2410C"),
         ("mid", "#7C3AED"),
         ("pnl", "#1D4ED8"),
         ("fees", "#DC2626"),
+        ("funding_rate", "#111827"),
     ]
     for row_idx, (col, color) in enumerate(series, start=1):
+        if col == "buy_sell_ntl_asymmetry":
+            if asymmetry.empty:
+                continue
+            fig.add_trace(_make_step_trace(asymmetry.index, asymmetry, col, color), row=row_idx, col=1)
+            fig.update_yaxes(title=col, row=row_idx, col=1, range=[-1.05, 1.05], automargin=True)
+            continue
         if timeline.empty or col not in timeline.columns:
             continue
         fig.add_trace(_make_step_trace(timeline.index, _safe_series(timeline, col), col, color), row=row_idx, col=1)
         fig.update_yaxes(title=col, row=row_idx, col=1, automargin=True)
-    fig.update_xaxes(title="Time", row=6, col=1)
+    fig.update_xaxes(title="Time", row=8, col=1)
     fig.update_layout(
         template="plotly_white",
-        height=980,
+        height=1280,
         title=f"{symbol} | {sdate}",
         hovermode="x unified",
         margin={"l": 18, "r": 18, "t": 70, "b": 40},
@@ -278,6 +425,8 @@ def make_symbol_figure(simdata: SimData, symbol: str, sdate: str, freq: str = "5
 
 def make_portfolio_figure(simdata: SimData, sdate: str, freq: str = "5min") -> go.Figure:
     timelines = simdata.get_timelines(sdate, freq=freq)
+    timeline_index = _union_timeline_index(timelines.values())
+    asymmetry = _buy_sell_notional_asymmetry(simdata, sdate, freq=freq, index=timeline_index)
     palette = [
         "#2563EB",
         "#0F766E",
@@ -293,14 +442,29 @@ def make_portfolio_figure(simdata: SimData, sdate: str, freq: str = "5min") -> g
     symbol_colors = {symbol: palette[idx % len(palette)] for idx, symbol in enumerate(sorted(timelines.keys()))}
     seen_symbols: set[str] = set()
     fig = make_subplots(
-        rows=3,
+        rows=5,
         cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.06,
-        subplot_titles=("Notional Traded", "Notional Position", "PnL"),
+        vertical_spacing=0.05,
+        subplot_titles=("Notional Traded", "Buy/Sell NTL Asymmetry", "Notional Position", "PnL", "Funding Rate"),
     )
-    series = ["notional_traded", "notional_pos", "pnl"]
-    for row_idx, col in enumerate(series, start=1):
+    series = [
+        ("notional_traded", True),
+        ("buy_sell_ntl_asymmetry", False),
+        ("notional_pos", True),
+        ("pnl", True),
+        ("funding_rate", False),
+    ]
+    for row_idx, (col, show_total) in enumerate(series, start=1):
+        if col == "buy_sell_ntl_asymmetry":
+            if not asymmetry.empty:
+                fig.add_trace(
+                    _make_step_trace(asymmetry.index, asymmetry, "total", "#111827", showlegend=False),
+                    row=row_idx,
+                    col=1,
+                )
+            fig.update_yaxes(title=col, row=row_idx, col=1, range=[-1.05, 1.05], automargin=True)
+            continue
         total_series = []
         for symbol, tl in timelines.items():
             if tl.empty or col not in tl.columns:
@@ -319,7 +483,7 @@ def make_portfolio_figure(simdata: SimData, sdate: str, freq: str = "5min") -> g
             )
             seen_symbols.add(symbol)
             total_series.append(_safe_series(tl, col))
-        if total_series:
+        if show_total and total_series:
             total = pd.concat(total_series, axis=1).sum(axis=1)
             fig.add_trace(
                 go.Scatter(
@@ -336,15 +500,99 @@ def make_portfolio_figure(simdata: SimData, sdate: str, freq: str = "5min") -> g
                 col=1,
             )
         fig.update_yaxes(title=col, row=row_idx, col=1, automargin=True)
-    fig.update_xaxes(title="Time", row=3, col=1)
+    fig.update_xaxes(title="Time", row=5, col=1)
     fig.update_layout(
         template="plotly_white",
-        height=820,
+        height=1180,
         title=f"Portfolio | {sdate}",
         hovermode="x unified",
         margin={"l": 18, "r": 18, "t": 70, "b": 40},
     )
     return fig
+
+
+def _union_timeline_index(timelines) -> pd.Index:
+    indexes = [tl.index for tl in timelines if not tl.empty]
+    if not indexes:
+        return pd.Index([])
+    values = indexes[0]
+    for index in indexes[1:]:
+        values = values.union(index)
+    return values.sort_values()
+
+
+def _empty_asymmetry(index: pd.Index | None = None) -> pd.Series:
+    if index is None:
+        return pd.Series(dtype=float, name="buy_sell_ntl_asymmetry")
+    return pd.Series(0.0, index=index, name="buy_sell_ntl_asymmetry")
+
+
+def _buy_sell_notional_asymmetry(
+    simdata: SimData,
+    sdate: str,
+    *,
+    freq: str = "5min",
+    symbol: str | None = None,
+    index: pd.Index | None = None,
+) -> pd.Series:
+    simdata.load_order(sdate)
+    if simdata.dfo is None:
+        return _empty_asymmetry(index)
+
+    t1 = pd.to_datetime(sdate, format="%Y%m%d")
+    t2 = t1 + pd.Timedelta(days=1)
+    try:
+        if symbol is None:
+            orders = simdata.dfo.reset_index()
+        else:
+            orders = simdata.dfo.loc[symbol].reset_index()
+            orders["symbol"] = symbol
+    except KeyError:
+        return _empty_asymmetry(index)
+
+    required = {"filled_qty", "price", "side", "symbol"}
+    if orders.empty or not required.issubset(orders.columns):
+        return _empty_asymmetry(index)
+
+    if "last_update_time" in orders.columns:
+        fill_time = pd.to_datetime(pd.to_numeric(orders["last_update_time"], errors="coerce"), unit="us")
+    elif "create_time" in orders.columns:
+        fill_time = pd.to_datetime(pd.to_numeric(orders["create_time"], errors="coerce"), unit="us")
+    elif "create_datetime" in orders.columns:
+        fill_time = pd.to_datetime(orders["create_datetime"], errors="coerce")
+    else:
+        return _empty_asymmetry(index)
+
+    orders = orders.copy()
+    orders["fill_time"] = fill_time
+    filled_qty = pd.to_numeric(orders["filled_qty"], errors="coerce").fillna(0.0)
+    orders = orders[(filled_qty > 0) & (orders["fill_time"] >= t1) & (orders["fill_time"] < t2)]
+    if orders.empty:
+        return _empty_asymmetry(index)
+
+    orders["side_bucket"] = orders["side"].map(_side_bucket)
+    orders = orders[orders["side_bucket"].isin(["BUY", "SELL"])].copy()
+    if orders.empty:
+        return _empty_asymmetry(index)
+
+    price = pd.to_numeric(orders["price"], errors="coerce")
+    filled_qty = pd.to_numeric(orders["filled_qty"], errors="coerce")
+    multiplier = pd.to_numeric(orders["symbol"].map(simdata.multiplier_map), errors="coerce")
+    orders["filled_ntl"] = price * filled_qty * multiplier
+    orders = orders.dropna(subset=["fill_time", "filled_ntl"]).set_index("fill_time").sort_index()
+    if orders.empty:
+        return _empty_asymmetry(index)
+
+    buy = orders.loc[orders["side_bucket"] == "BUY", "filled_ntl"].resample(freq, label="right").sum()
+    sell = orders.loc[orders["side_bucket"] == "SELL", "filled_ntl"].resample(freq, label="right").sum()
+    by_side = pd.concat([buy.rename("buy"), sell.rename("sell")], axis=1).fillna(0.0)
+    denominator = by_side["buy"] + by_side["sell"]
+    asymmetry = ((by_side["buy"] - by_side["sell"]) / denominator.where(denominator != 0)).fillna(0.0)
+    asymmetry.name = "buy_sell_ntl_asymmetry"
+    if index is not None:
+        asymmetry = asymmetry.reindex(index).fillna(0.0)
+        asymmetry.name = "buy_sell_ntl_asymmetry"
+    return asymmetry
 
 
 def _side_bucket(raw: object) -> str | None:
@@ -439,18 +687,44 @@ def _raw_hour_state_frame(simdata: SimData, symbol: str, sdate: str, hour: int) 
     return df_state
 
 
+def _hour_state_series(df_state: pd.DataFrame, col: str, *, side: str | None = None) -> pd.Series:
+    if col in df_state.columns:
+        series = _safe_series(df_state, col)
+        if col in {"min_net_bid", "net_bid", "max_net_ask", "net_ask"}:
+            series = series.mask(series.abs() >= 1e8)
+        return series
+    if col == "max_buy_ntl":
+        qty = _safe_series(df_state, "buy_top_qty")
+        px = _safe_series(df_state, "buy_top_px")
+        mult = _safe_series(df_state, "contract_multiplier")
+        if mult.empty:
+            mult = pd.Series(1.0, index=df_state.index)
+        return qty * px * mult
+    if col == "max_sell_ntl":
+        qty = _safe_series(df_state, "sell_top_qty")
+        px = _safe_series(df_state, "sell_top_px")
+        mult = _safe_series(df_state, "contract_multiplier")
+        if mult.empty:
+            mult = pd.Series(1.0, index=df_state.index)
+        return qty * px * mult
+    if col in {"bid_ask_price", "bid_order_price", "ask_order_price"}:
+        return _safe_series(df_state, col)
+    return pd.Series(dtype=float, index=df_state.index)
+
+
 def make_hour_figure(simdata: SimData, symbol: str, sdate: str, hour: int) -> go.Figure:
     dfo, dfbidask = simdata.get_orders_bid_ask(symbol, sdate, hour)
     df_state = _raw_hour_state_frame(simdata, symbol, sdate, hour)
     t1 = pd.to_datetime(sdate, format="%Y%m%d").replace(hour=hour)
     t2 = t1 + timedelta(hours=1)
     fig = make_subplots(
-        rows=2,
+        rows=8,
         cols=1,
         shared_xaxes=True,
         vertical_spacing=0.05,
-        row_heights=[2, 1],
+        row_heights=[2.2, 1, 1, 1, 1, 1, 1, 1],
     )
+    has_data = False
 
     if not dfbidask.empty:
         fig.add_trace(
@@ -466,6 +740,7 @@ def make_hour_figure(simdata: SimData, symbol: str, sdate: str, hour: int) -> go
             row=1,
             col=1,
         )
+        has_data = True
         fig.add_trace(
             go.Scatter(
                 x=dfbidask.index,
@@ -479,6 +754,7 @@ def make_hour_figure(simdata: SimData, symbol: str, sdate: str, hour: int) -> go
             row=1,
             col=1,
         )
+        has_data = True
 
     if not dfo.empty:
         order_df = dfo.reset_index()
@@ -492,8 +768,10 @@ def make_hour_figure(simdata: SimData, symbol: str, sdate: str, hour: int) -> go
         sell_segments = _build_order_segment_frame(sell_df, side="SELL")
         if not buy_segments.empty:
             fig.add_trace(_make_order_segment_trace(buy_segments, side="BUY", color="#0F766E"), row=1, col=1)
+            has_data = True
         if not sell_segments.empty:
             fig.add_trace(_make_order_segment_trace(sell_segments, side="SELL", color="#C2410C"), row=1, col=1)
+            has_data = True
 
         if "filled_qty" in order_df.columns:
             filled_qty = pd.to_numeric(order_df["filled_qty"], errors="coerce").fillna(0)
@@ -522,6 +800,7 @@ def make_hour_figure(simdata: SimData, symbol: str, sdate: str, hour: int) -> go
                     row=1,
                     col=1,
                 )
+                has_data = True
             if not sell_fills.empty:
                 fig.add_trace(
                     go.Scatter(
@@ -535,27 +814,71 @@ def make_hour_figure(simdata: SimData, symbol: str, sdate: str, hour: int) -> go
                     row=1,
                     col=1,
                 )
+                has_data = True
 
-    if not df_state.empty and "notional_pos" in df_state.columns:
+    def _add_state_trace(col: str, row: int, color: str, label: str | None = None) -> None:
+        nonlocal has_data
+        if df_state.empty and col not in {"max_buy_ntl", "max_sell_ntl"}:
+            return
+        series = _hour_state_series(df_state, col)
+        if series.empty:
+            return
         fig.add_trace(
             go.Scatter(
                 x=df_state.index,
-                y=_safe_series(df_state, "notional_pos"),
+                y=series,
                 mode="lines",
-                name="notional position",
-                line={"color": "#6D28D9", "width": 1.4},
-                hovertemplate="notional_pos=%{y}<extra></extra>",
+                name=label or col,
+                line={"color": color, "width": 1.4},
+                line_shape="hv",
+                hovertemplate=f"{label or col}=%{{y}}<extra></extra>",
             ),
-            row=2,
+            row=row,
             col=1,
         )
+        has_data = True
 
-    fig.update_xaxes(range=[t1, t2], title="Time", row=2, col=1)
+    _add_state_trace("notional_pos", 2, "#6D28D9", "notional position")
+    _add_state_trace("pnl", 3, "#7C3AED", "pnl")
+    _add_state_trace("min_net_bid", 4, "#9CA3AF", "min net bid")
+    _add_state_trace("net_bid", 4, "#2563EB", "net bid")
+    _add_state_trace("bid_ask_price", 4, "#14B8A6", "bid/ask price")
+    _add_state_trace("bid_order_price", 4, "#0EA5E9", "bid order price")
+    _add_state_trace("max_net_ask", 5, "#F97316", "max net ask")
+    _add_state_trace("net_ask", 5, "#DC2626", "net ask")
+    _add_state_trace("ask_order_price", 5, "#A855F7", "ask order price")
+    _add_state_trace("max_buy_ntl", 6, "#0F766E", "max buy ntl")
+    _add_state_trace("buy_size", 6, "#22C55E", "buy size")
+    _add_state_trace("bid_order_ntl", 6, "#1D4ED8", "bid order ntl")
+    _add_state_trace("max_sell_ntl", 7, "#C2410C", "max sell ntl")
+    _add_state_trace("sell_size", 7, "#F59E0B", "sell size")
+    _add_state_trace("ask_order_ntl", 7, "#7C3AED", "ask order ntl")
+    _add_state_trace("bid_order_size", 8, "#16A34A", "buy order size")
+    _add_state_trace("ask_order_size", 8, "#DC2626", "ask order size")
+
+    if not has_data:
+        fig.add_annotation(
+            text="No data for this hour",
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            font={"size": 14, "color": "#6B7280"},
+        )
+
+    fig.update_xaxes(range=[t1, t2], title="Time", row=8, col=1)
     fig.update_yaxes(title="Price", automargin=True, row=1, col=1)
     fig.update_yaxes(title="Notional Position", automargin=True, row=2, col=1)
+    fig.update_yaxes(title="PnL", automargin=True, row=3, col=1)
+    fig.update_yaxes(title="Net Bid", automargin=True, row=4, col=1)
+    fig.update_yaxes(title="Net Ask", automargin=True, row=5, col=1)
+    fig.update_yaxes(title="Buy NTL", automargin=True, row=6, col=1)
+    fig.update_yaxes(title="Sell NTL", automargin=True, row=7, col=1)
+    fig.update_yaxes(title="Order Size", automargin=True, row=8, col=1)
     fig.update_layout(
         template="plotly_white",
-        height=630,
+        height=2210,
         title=f"{symbol} | {sdate} | {hour:02d}:00",
         hovermode="x unified",
         margin={"l": 18, "r": 18, "t": 70, "b": 40},
@@ -610,6 +933,57 @@ def _daily_portfolio_summary(simdata: SimData) -> pd.DataFrame:
                     totals[col] += float(value)
         rows.append({"date": date, **totals})
     return pd.DataFrame(rows).sort_values("date").reset_index(drop=True) if rows else pd.DataFrame()
+
+
+def _load_index_summary_cache() -> dict[str, dict[str, float]]:
+    global _INDEX_SUMMARY_CACHE
+    if _INDEX_SUMMARY_CACHE is not None:
+        return _INDEX_SUMMARY_CACHE
+    try:
+        raw = json.loads(INDEX_SUMMARY_CACHE_PATH.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            _INDEX_SUMMARY_CACHE = {
+                str(k): v for k, v in raw.items() if isinstance(v, dict)
+            }
+        else:
+            _INDEX_SUMMARY_CACHE = {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        _INDEX_SUMMARY_CACHE = {}
+    return _INDEX_SUMMARY_CACHE
+
+
+def _save_index_summary_cache() -> None:
+    cache = _load_index_summary_cache()
+    try:
+        INDEX_SUMMARY_CACHE_PATH.write_text(json.dumps(cache), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _head_index_summary(head: Path) -> tuple[float, float]:
+    head_str = str(head)
+    cache = _load_index_summary_cache()
+    cache_row = cache.get(head_str)
+    head_mtime = _head_last_update_ts(head)
+    if cache_row is not None:
+        cached_mtime = float(cache_row.get("last_update_ts", -1.0))
+        if cached_mtime == head_mtime:
+            return float(cache_row.get("total_notional", 0.0)), float(cache_row.get("pnl_bps", 0.0))
+    simdata = SimData(head_str)
+    summary_df = _daily_portfolio_summary(simdata)
+    if summary_df.empty:
+        total_notional, pnl_bps = 0.0, 0.0
+    else:
+        total_notional = float(pd.to_numeric(summary_df["notional_traded"], errors="coerce").fillna(0.0).sum())
+        total_pnl = float(pd.to_numeric(summary_df["pnl"], errors="coerce").fillna(0.0).sum())
+        pnl_bps = (total_pnl / total_notional) if total_notional else 0.0
+    cache[head_str] = {
+        "last_update_ts": head_mtime,
+        "total_notional": total_notional,
+        "pnl_bps": pnl_bps,
+    }
+    _save_index_summary_cache()
+    return total_notional, pnl_bps
 
 
 def _stats_bucket_minutes(simdata: SimData) -> int:
@@ -787,13 +1161,6 @@ def render_stats(search: str) -> html.Div:
     avg_return = total_return
     max_drawdown = float(summary_df["drawdown"].min()) if not summary_df.empty else 0.0
     max_abs_position = float(summary_df["abs_pos"].max()) if not summary_df.empty else 0.0
-    summary_nav = html.Div(
-        [
-            html.A("Home", href="/", style={"marginRight": "12px"}),
-            html.Span(f"Chart Interval: {bucket_minutes} min"),
-        ],
-        style={"marginBottom": "10px"},
-    )
     stats_table = _make_stats_table(
         [
             ("Days", str(len(summary_df))),
@@ -810,7 +1177,8 @@ def render_stats(search: str) -> html.Div:
             ("Avg Return", _format_bps(avg_return)),
             ("Max Drawdown", _format_usd(max_drawdown)),
             ("Max Abs Position", _format_usd(max_abs_position)),
-        ]
+        ],
+        compact=True,
     )
     table_rows = []
     for row in summary_df.itertuples(index=False):
@@ -830,13 +1198,47 @@ def render_stats(search: str) -> html.Div:
             html.Thead(html.Tr([html.Th("Date"), html.Th("PnL"), html.Th("Notional Traded"), html.Th("Notional Pos"), html.Th("Fees")])),
             html.Tbody(table_rows),
         ],
-        style={"width": "100%", "borderCollapse": "collapse", "marginTop": "12px"},
+        style={"width": "100%", "borderCollapse": "collapse", "marginTop": "8px", "fontSize": "11px"},
     )
-    return _page_shell(title, html.Div([summary_nav, stats_table, dcc.Graph(figure=fig), table]))
+    head_nav = _make_head_nav(head, "/stats", symbol if symbol else None, ALL_DATES_VALUE)
+    sidebar = html.Div(
+        [stats_table],
+        style={
+            "flex": "0 0 320px",
+            "maxWidth": "320px",
+            "minWidth": "280px",
+            "fontSize": "11px",
+            "lineHeight": "1.15",
+        },
+    )
+    main_panel = html.Div(
+        [dcc.Graph(figure=fig, style={"height": "calc(100vh - 140px)"})],
+        style={"flex": "1 1 auto", "minWidth": "0"},
+    )
+    return _page_shell(
+        title,
+        html.Div(
+            [
+                head_nav,
+                html.Div(
+                    [sidebar, main_panel],
+                    style={"display": "flex", "gap": "12px", "alignItems": "flex-start"},
+                ),
+                html.Div(table, style={"marginTop": "10px"}),
+            ]
+        ),
+    )
 
 
 def render_index() -> html.Div:
     grouped = discover_heads(window_hours=DISCOVERY_WINDOW_HOURS)
+    all_heads = [head for heads in grouped.values() for head in heads]
+    common_prefix: Path | None = None
+    if all_heads:
+        try:
+            common_prefix = Path(os.path.commonpath([str(head) for head in all_heads]))
+        except ValueError:
+            common_prefix = None
     blocks = []
     for root_name, heads in grouped.items():
         if not heads:
@@ -845,70 +1247,45 @@ def render_index() -> html.Div:
         for head in heads:
             files = state_files_for_head(head)
             order_dates = order_parquet_dates_for_head(head)
+            total_notional, pnl_bps = _head_index_summary(head)
             by_symbol: dict[str, list[str]] = defaultdict(list)
             for row in files:
                 if row["date"] in order_dates:
                     by_symbol[row["symbol"]].append(row["date"])
             all_dates = sorted({row["date"] for row in files if row["date"] in order_dates})
-            symbol_items = []
-            if len(by_symbol) > 1 and all_dates:
-                symbol_items.append(
-                    html.Div(
-                        [
-                            html.A(
-                                "portfolio",
-                                href=f"/stats?head={quote(str(head))}",
-                                style={"fontWeight": "600", "marginRight": "10px"},
-                            ),
-                            html.Span("dates: "),
-                            *[
-                                html.A(
-                                    d,
-                                    href=f"/portfolio?head={quote(str(head))}&date={d}",
-                                    style={"marginLeft": "8px"},
-                                )
-                                for d in all_dates
-                            ],
-                        ],
-                        style={"marginBottom": "8px"},
-                    )
-                )
-            for symbol, dates in sorted(by_symbol.items()):
-                dates = sorted(set(dates))
-                if not dates:
-                    continue
-                latest_date = dates[-1]
-                links = [
-                    html.A(
-                        symbol,
-                        href=f"/stats?head={quote(str(head))}&symbol={quote(symbol)}",
-                        style={"fontWeight": "600", "marginRight": "10px"},
-                    )
-                ]
-                symbol_items.append(
-                    html.Div(
-                        links
-                        + [
-                            html.Span("dates: "),
-                            *[
-                                html.A(
-                                    d,
-                                    href=f"/symbol?head={quote(str(head))}&symbol={quote(symbol)}&date={d}",
-                                    style={"marginLeft": "8px"},
-                                )
-                                for d in dates
-                            ],
-                        ],
-                        style={"marginBottom": "6px"},
-                    )
-                )
             head_cards.append(
                 html.Div(
                     [
-                        html.H4(str(head), style={"margin": "0 0 8px 0"}),
-                        html.Div(symbol_items),
+                        html.Div(
+                            [
+                                html.H4(
+                                    html.A(
+                                        str(head.relative_to(common_prefix)) if common_prefix is not None and head.is_relative_to(common_prefix) else str(head),
+                                        href=f"/stats?head={quote(str(head))}",
+                                        style={"color": "#111827", "textDecoration": "none"},
+                                    ),
+                                    style={"margin": 0, "display": "inline-block", "marginRight": "12px"},
+                                ),
+                                html.Div(
+                                    [
+                                        html.Span(f"NTL: {_format_usd(total_notional)}", style={"marginRight": "12px"}),
+                                        html.Span(f"PnL: {_format_bps(pnl_bps)}", style={"marginRight": "12px"}),
+                                        *[
+                                            html.A(
+                                                d,
+                                                href=f"/portfolio?head={quote(str(head))}&date={d}",
+                                                style={"marginRight": "8px"},
+                                            )
+                                            for d in all_dates
+                                        ],
+                                    ],
+                                    style={"display": "inline-block", "whiteSpace": "nowrap"},
+                                ),
+                            ],
+                            style={"marginBottom": "4px"},
+                        ),
                     ],
-                    style={"border": "1px solid #e5e7eb", "borderRadius": "10px", "padding": "12px", "marginBottom": "12px"},
+                    style={"marginBottom": "6px"},
                 )
             )
         blocks.append(html.Div([html.H3(root_name), *head_cards]))
@@ -938,16 +1315,12 @@ def render_portfolio(search: str) -> html.Div:
             return _page_shell("No dates", html.Pre(str(head)))
         date = simdata.sdates[-1]
     fig = make_portfolio_figure(simdata, date)
-    links = [html.A("Home", href="/", style={"marginRight": "12px"})]
-    links.extend(
-        html.A(d, href=f"/portfolio?head={quote(str(head))}&date={d}", style={"marginRight": "10px"})
-        for d in simdata.sdates
-    )
+    head_nav = _make_head_nav(head, "/portfolio", None, date)
     return _page_shell(
         f"Portfolio | {head}",
         html.Div(
             [
-                html.Div([html.Span("Dates: "), *links], style={"marginBottom": "10px"}),
+                head_nav,
                 dcc.Graph(figure=fig),
             ]
         ),
@@ -968,53 +1341,19 @@ def render_symbol(search: str) -> html.Div:
     if not date:
         date = available_dates[-1]
     simdata = SimData(str(head))
-    symbol_fig = make_symbol_figure(simdata, symbol, date)
     hour = query.get("hour", [""])[0]
     if hour and hour.isdigit():
         hour_i = max(0, min(23, int(hour)))
     else:
-        hour_i = 0
+        hour_i = None
+    head_nav = _make_head_nav(head, "/symbol", symbol, date, hour=hour if hour else None)
+    if hour_i is None:
+        symbol_fig = make_symbol_figure(simdata, symbol, date)
+        body = html.Div([head_nav, dcc.Graph(figure=symbol_fig, style={"height": "86vh"})])
+        return _page_shell(f"{symbol} | {date} | {head}", body)
     hour_fig = make_hour_figure(simdata, symbol, date, hour_i)
-    date_links = [
-        html.A(
-            d,
-            href=f"/symbol?head={quote(str(head))}&symbol={quote(symbol)}&date={d}",
-            style={"marginRight": "10px"},
-        )
-        for d in available_dates
-    ]
-    hour_links = [
-        html.A(
-            f"{h:02d}",
-            href=f"/symbol?head={quote(str(head))}&symbol={quote(symbol)}&date={date}&hour={h}",
-            style={"marginRight": "8px"},
-        )
-        for h in range(24)
-    ]
-    body = html.Div(
-        [
-            html.Div(
-                [
-                    html.A("Home", href="/", style={"marginRight": "12px"}),
-                    html.A("Portfolio", href=f"/stats?head={quote(str(head))}&symbol={quote(symbol)}", style={"marginRight": "12px"}),
-                    html.Span(f"Symbol: {symbol}", style={"fontWeight": "600", "marginRight": "12px"}),
-                    html.Span("Dates: "),
-                    *date_links,
-                ],
-                style={"marginBottom": "10px"},
-            ),
-            dcc.Graph(figure=symbol_fig, style={"height": "86vh"}),
-            html.Div(
-                [
-                    html.H4("Hourly View", style={"margin": "10px 0 8px 0"}),
-                    html.Div([html.Span("Hours: "), *hour_links], style={"marginBottom": "8px"}),
-                    dcc.Graph(figure=hour_fig, style={"height": "60vh"}),
-                ],
-                style={"marginTop": "12px"},
-            ),
-        ]
-    )
-    return _page_shell(f"{symbol} | {date} | {head}", body)
+    body = html.Div([head_nav, dcc.Graph(figure=hour_fig, style={"height": "86vh"})])
+    return _page_shell(f"{symbol} | {date} | {hour_i:02d}:00 | {head}", body)
 
 
 def render_chart(search: str) -> html.Div:
@@ -1029,18 +1368,12 @@ def render_chart(search: str) -> html.Div:
     hour_i = max(0, min(23, hour_i))
     simdata = SimData(str(head))
     fig = make_hour_figure(simdata, symbol, date, hour_i)
+    head_nav = _make_head_nav(head, "/chart", symbol, date, hour=hour)
     return _page_shell(
         f"{symbol} | {date} | {hour_i:02d}:00 | {head}",
         html.Div(
             [
-                html.Div(
-                    [
-                        html.A("Home", href="/", style={"marginRight": "12px"}),
-                        html.A("Symbol", href=f"/symbol?head={quote(str(head))}&symbol={quote(symbol)}&date={date}", style={"marginRight": "12px"}),
-                        html.A("Portfolio", href=f"/stats?head={quote(str(head))}&symbol={quote(symbol)}", style={"marginRight": "12px"}),
-                    ],
-                    style={"marginBottom": "10px"},
-                ),
+                head_nav,
                 dcc.Graph(figure=fig, style={"height": "78vh"}),
             ]
         ),
@@ -1050,6 +1383,35 @@ def render_chart(search: str) -> html.Div:
 app = dash.Dash(__name__, suppress_callback_exceptions=True)
 app.title = "Sim Dashboard v2"
 app.layout = html.Div([dcc.Location(id="url"), html.Div(id="page-content")])
+
+
+@app.callback(
+    Output("url", "href"),
+    Input("symbol-nav-dropdown", "value"),
+    Input("date-nav-dropdown", "value"),
+    Input("hour-nav-dropdown", "value"),
+    State("url", "pathname"),
+    State("url", "search"),
+    prevent_initial_call=True,
+)
+def navigate_from_dropdowns(symbol_value, date_value, hour_value, pathname: str | None, search: str | None):
+    search = search or ""
+    if pathname in (None, "/", ""):
+        return no_update
+    query = parse_qs(search.lstrip("?"))
+    head, _, _ = _resolve_head_symbol_date(query, require_symbol=False)
+    if head is None:
+        return no_update
+    target_symbol = None if symbol_value in (None, ALL_SYMBOLS_VALUE) else str(symbol_value)
+    target_date = None if date_value in (None, ALL_DATES_VALUE) else str(date_value)
+    if hour_value in (None, ALL_HOURS_VALUE):
+        target_hour = None
+    else:
+        target_hour = str(hour_value)
+    target_href = _nav_href(pathname, head, target_symbol, target_date, target_hour)
+    if target_href == f"{pathname}{search}":
+        return no_update
+    return target_href
 
 
 @app.callback(Output("page-content", "children"), Input("url", "pathname"), Input("url", "search"))

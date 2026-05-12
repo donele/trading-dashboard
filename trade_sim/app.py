@@ -5,7 +5,7 @@ from datetime import timedelta
 import pyarrow.parquet as pq
 
 def get_ref():
-    ref_path = '/home/jdlee/workspace/refdata/crypto_symbology/refdata.20260330.json'
+    ref_path = '/var/lib/sgt/refdata/refdata.json'
     with open(ref_path, 'r') as f:
         ref0 = json.load(f)
     ref = {x['flat_id']: x for x in ref0}
@@ -77,17 +77,20 @@ class SimData:
         t1 = pd.to_datetime(sdate, format='%Y%m%d')
         t2 = t1 + timedelta(days=1)
         if self.dfs is None:
-            return pd.DataFrame(columns=['size_traded', 'notional_traded', 'notional_pos', 'mid', 'pnl', 'fees'])
+            return pd.DataFrame(columns=['size_traded', 'notional_traded', 'notional_pos', 'mid', 'pnl', 'fees', 'funding_rate'])
         try:
             df_symbol = self.dfs.loc[symbol]
         except KeyError:
-            return pd.DataFrame(columns=['size_traded', 'notional_traded', 'notional_pos', 'mid', 'pnl', 'fees'])
+            return pd.DataFrame(columns=['size_traded', 'notional_traded', 'notional_pos', 'mid', 'pnl', 'fees', 'funding_rate'])
         df_symbol = df_symbol[(df_symbol.index >= t1) & (df_symbol.index < t2)]
         if df_symbol.empty:
-            return pd.DataFrame(columns=['size_traded', 'notional_traded', 'notional_pos', 'mid', 'pnl', 'fees'])
+            return pd.DataFrame(columns=['size_traded', 'notional_traded', 'notional_pos', 'mid', 'pnl', 'fees', 'funding_rate'])
         df1 = df_symbol.resample(freq, label='right').last().ffill()
         df1['mid'] = df1[['bid', 'ask']].mean(axis=1)
-        df1 = df1[['size_traded', 'notional_traded', 'notional_pos', 'mid', 'pnl', 'fees']]
+        cols = ['size_traded', 'notional_traded', 'notional_pos', 'mid', 'pnl', 'fees']
+        if 'funding_rate' in df1.columns:
+            cols.append('funding_rate')
+        df1 = df1[cols]
         return df1
     def get_timelines(self, sdate, freq='5min'):
         for symbol in self.symbols:
@@ -116,7 +119,7 @@ def plot_symbol_date(simdata, symbol, sdate):
 
     dftimeline = simdata.get_timeline(symbol, sdate)
     
-    ny = 6
+    ny = 7
     nx = 1
     plt.figure(figsize=(16, ny*2))
     iplot = 0
@@ -133,18 +136,19 @@ def plot_portfolio_date(simdata, sdate):
 
     timelines = simdata.get_timelines(sdate, freq='5min')
 
-    ny = 4
+    ny = 5
     nx = 1
     plt.figure(figsize=(16, ny*2))
     iplot = 0
 
     symbols = list(timelines.keys())
-    for col in ['notional_traded', 'notional_pos', 'pnl']:
+    for col, show_total in [('notional_traded', True), ('notional_pos', True), ('pnl', True), ('funding_rate', False)]:
         plt.subplot(ny, nx, iplot:=iplot+1)
         for symbol in symbols:
             plt.step(timelines[symbol].index, timelines[symbol][col], label=symbol)
-        total = pd.concat([timelines[symbol][col] for symbol in symbols], axis=1).sum(axis=1)
-        plt.step(total.index, total, '.', color='k', markersize=2, label='total')
+        if show_total:
+            total = pd.concat([timelines[symbol][col] for symbol in symbols], axis=1).sum(axis=1)
+            plt.step(total.index, total, '.', color='k', markersize=2, label='total')
         plt.title(f'{col} {sdate}')
         plt.legend()
         plt.grid()
