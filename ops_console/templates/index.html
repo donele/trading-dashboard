@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title }}</title>
+    {% if refresh_seconds > 0 %}
+    <meta http-equiv="refresh" content="{{ refresh_seconds }}">
+    {% endif %}
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4efe6;
+        --card: #fffaf1;
+        --ink: #1d1a16;
+        --muted: #6c6258;
+        --border: #d8ccb9;
+        --accent: #0f766e;
+        --accent-2: #b45309;
+        --good: #166534;
+        --bad: #991b1b;
+        --warn: #92400e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(15,118,110,0.12), transparent 30%),
+          radial-gradient(circle at top right, rgba(180,83,9,0.15), transparent 25%),
+          var(--bg);
+      }
+      a { color: var(--accent); }
+      .shell {
+        max-width: 1480px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      .hero {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        align-items: flex-start;
+        margin-bottom: 24px;
+      }
+      .hero h1 {
+        margin: 0;
+        font-size: 2.4rem;
+        line-height: 1;
+      }
+      .hero p {
+        margin: 8px 0 0 0;
+        color: var(--muted);
+        max-width: 56rem;
+      }
+      .badge {
+        display: inline-block;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.6);
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+      .notice {
+        margin: 12px 0 0 0;
+        padding: 12px 14px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.65);
+      }
+      .notice.error {
+        border-color: rgba(153,27,27,0.3);
+        color: var(--bad);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(280px, 340px) 1fr;
+        gap: 24px;
+      }
+      .panel {
+        background: rgba(255,250,241,0.92);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 18px;
+        box-shadow: 0 14px 36px rgba(29,26,22,0.06);
+      }
+      .panel h2 {
+        margin: 0 0 14px 0;
+        font-size: 1.15rem;
+      }
+      .endpoint-list {
+        display: grid;
+        gap: 12px;
+      }
+      .endpoint {
+        padding: 12px;
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.72);
+      }
+      .endpoint strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+      .endpoint .note {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+      .service-list {
+        display: grid;
+        gap: 18px;
+      }
+      .service-tabs {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+      }
+      .tab-button {
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.8);
+        color: var(--muted);
+        border-radius: 999px;
+        padding: 8px 14px;
+        cursor: pointer;
+        font: inherit;
+        transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+      }
+      .tab-button:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .tab-button.active {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: white;
+      }
+      .service {
+        padding: 16px;
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.72);
+      }
+      .service-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: flex-start;
+      }
+      .service h3 {
+        margin: 0;
+        font-size: 1.15rem;
+      }
+      .sub {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+      .state {
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-size: 0.8rem;
+      }
+      .state.active { color: var(--good); }
+      .state.inactive { color: var(--warn); }
+      .state.failed, .state.unknown { color: var(--bad); }
+      .actions {
+        display: flex;
+        gap: 8px;
+        margin: 14px 0;
+        flex-wrap: wrap;
+      }
+      button {
+        border: 1px solid var(--border);
+        background: white;
+        color: var(--ink);
+        border-radius: 999px;
+        padding: 8px 14px;
+        cursor: pointer;
+        font: inherit;
+      }
+      button:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .logs-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: baseline;
+        margin-bottom: 8px;
+      }
+      .logs-head small {
+        color: var(--muted);
+      }
+      pre {
+        margin: 0;
+        padding: 14px;
+        border-radius: 14px;
+        background: #161616;
+        color: #e9dfcf;
+        overflow-x: auto;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 0.88rem;
+        line-height: 1.45;
+        height: calc(36 * 1.45em + 28px);
+      }
+      @media (max-width: 980px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .hero {
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <section class="hero">
+        <div>
+          <h1>{{ title }}</h1>
+          <p>Control the market-data subscriptions and local dashboard servers, inspect HTTP links, and review recent logs from market-data services and erigon.</p>
+          {% if message %}
+          <div class="notice">{{ message }}</div>
+          {% endif %}
+          {% if error %}
+          <div class="notice error">{{ error }}</div>
+          {% endif %}
+        </div>
+        <div class="badge">auto refresh: {{ refresh_seconds }}s · logs: {{ log_lines }} lines</div>
+      </section>
+
+      <div class="grid">
+        <aside class="panel">
+          <h2>HTTP Endpoints</h2>
+          <div class="endpoint-list">
+            {% for endpoint in endpoints %}
+            <div class="endpoint">
+              <strong>{{ endpoint.name }}</strong>
+              <div><a href="{{ endpoint.url }}" target="_blank" rel="noreferrer">{{ endpoint.url }}</a></div>
+              {% if endpoint.note %}
+              <div class="note">{{ endpoint.note }}</div>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+        </aside>
+
+        <main class="panel">
+          <h2>Services</h2>
+          <div class="service-tabs" role="tablist" aria-label="Service groups">
+            <button class="tab-button active" type="button" data-tab-button="all">All</button>
+            {% for entry in services %}
+            <button class="tab-button" type="button" data-tab-button="{{ entry.status.name }}">{{ entry.status.display_name }}</button>
+            {% endfor %}
+          </div>
+          <div class="service-list">
+            {% for entry in services %}
+            {% set status = entry.status %}
+            <section class="service" data-service-tab="{{ status.name }}">
+              <div class="service-top">
+                <div>
+                  <h3>{{ status.display_name }}</h3>
+                  <div class="sub">{{ status.manager }} · {{ status.detail or status.name }}</div>
+                  {% if status.note %}
+                  <div class="sub">{{ status.note }}</div>
+                  {% endif %}
+                </div>
+                <div class="state {{ status.active_state }}">{{ status.active_state }} / {{ status.sub_state }}</div>
+              </div>
+              <div class="sub">{{ status.status_text }}</div>
+              <div class="sub">unit state: {{ status.unit_file_state }}</div>
+              <div class="actions">
+                <form method="post" action="/services/{{ status.name }}/start">
+                  <button type="submit">Start</button>
+                </form>
+                <form method="post" action="/services/{{ status.name }}/stop">
+                  <button type="submit">Stop</button>
+                </form>
+                <form method="post" action="/services/{{ status.name }}/restart">
+                  <button type="submit">Restart</button>
+                </form>
+                <form method="get" action="/logs/{{ status.name }}">
+                  <input type="hidden" name="lines" value="{{ log_lines }}">
+                  <button type="submit">Open Raw Logs</button>
+                </form>
+              </div>
+              <div class="logs-head">
+                <strong>Recent Logs</strong>
+                <small>{{ status.log_source }}</small>
+              </div>
+              <pre>{{ entry.logs }}</pre>
+            </section>
+            {% endfor %}
+          </div>
+        </main>
+      </div>
+    </div>
+    <script>
+      (function () {
+        const buttons = Array.from(document.querySelectorAll("[data-tab-button]"));
+        const cards = Array.from(document.querySelectorAll("[data-service-tab]"));
+        if (!buttons.length || !cards.length) {
+          return;
+        }
+
+        const storageKey = "ops-console-service-tab";
+        const validTabs = new Set(buttons.map((button) => button.dataset.tabButton));
+
+        function applyTab(tab) {
+          const selected = validTabs.has(tab) ? tab : "all";
+          buttons.forEach((button) => {
+            button.classList.toggle("active", button.dataset.tabButton === selected);
+          });
+          cards.forEach((card) => {
+            const matches = selected === "all" || card.dataset.serviceTab === selected;
+            card.hidden = !matches;
+          });
+          try {
+            window.localStorage.setItem(storageKey, selected);
+          } catch (_err) {
+          }
+        }
+
+        buttons.forEach((button) => {
+          button.addEventListener("click", function () {
+            applyTab(button.dataset.tabButton || "all");
+          });
+        });
+
+        let initialTab = "all";
+        try {
+          initialTab = window.localStorage.getItem(storageKey) || "all";
+        } catch (_err) {
+        }
+        applyTab(initialTab);
+      }());
+    </script>
+  </body>
+</html>

@@ -1,0 +1,124 @@
+{
+  "title": "Trading Ops Console",
+  "refresh_seconds": 15,
+  "log_lines": 80,
+  "endpoints": [
+    {
+      "name": "Algo Docs",
+      "url": "http://127.0.0.1:8010/",
+      "note": "Rendered MkDocs site for sgt docs"
+    },
+    {
+      "name": "Feed Live",
+      "url": "http://127.0.0.1:8020/",
+      "note": "Shared-memory live price monitor"
+    },
+    {
+      "name": "Feed Daily",
+      "url": "http://127.0.0.1:8030/",
+      "note": "Daily stats dashboard"
+    },
+    {
+      "name": "Trade Sim",
+      "url": "http://127.0.0.1:8050/",
+      "note": "Simulation dashboard"
+    },
+    {
+      "name": "Trade Livesim",
+      "url": "http://127.0.0.1:8060/",
+      "note": "Live-feed trading log dashboard"
+    },
+    {
+      "name": "Ops Console",
+      "url": "http://127.0.0.1:8000/",
+      "note": "This control panel"
+    }
+  ],
+  "services": [
+    {
+      "name": "md-okx-futures",
+      "manager": "systemd",
+      "display_name": "OKX Futures MD",
+      "unit": "sgt-md-okx-futures.service",
+      "scope": "system",
+      "log_file": "/var/lib/sgt/logs/md_okx_futures/md_okx_futures.log",
+      "note": "Market-data subscription service"
+    },
+    {
+      "name": "md-gate-futures",
+      "manager": "systemd",
+      "display_name": "Gate Futures MD",
+      "unit": "sgt-md-gate-futures.service",
+      "scope": "system",
+      "log_file": "/var/lib/sgt/logs/md_gate_futures/md_gate_futures.log",
+      "note": "Market-data subscription service"
+    },
+    {
+      "name": "md-bybit-futures",
+      "manager": "systemd",
+      "display_name": "Bybit Futures MD",
+      "unit": "sgt-md-bybit-futures.service",
+      "scope": "system",
+      "log_file": "/var/lib/sgt/logs/md_bybit_futures/md_bybit_futures.log",
+      "note": "Market-data subscription service"
+    },
+    {
+      "name": "erigon",
+      "manager": "systemd",
+      "display_name": "Erigon",
+      "unit": "erigon.service",
+      "scope": "system",
+      "note": "Ethereum execution client"
+    },
+    {
+      "name": "algo-docs",
+      "manager": "process",
+      "display_name": "Algo Docs",
+      "cwd": "~/repos/trading-dashboard",
+      "start_command": ["python3", "-m", "algo_docs"],
+      "log_file": "~/.local/state/trading-dashboard/ops-console/logs/algo-docs.log",
+      "pid_file": "~/.local/state/trading-dashboard/ops-console/run/algo-docs.pid",
+      "note": "Serves the rendered docs site"
+    },
+    {
+      "name": "feed-live",
+      "manager": "process",
+      "display_name": "Feed Live",
+      "cwd": "~/repos/trading-dashboard",
+      "start_command": ["python3", "-m", "feed_live"],
+      "log_file": "~/.local/state/trading-dashboard/ops-console/logs/feed-live.log",
+      "pid_file": "~/.local/state/trading-dashboard/ops-console/run/feed-live.pid",
+      "note": "Live SHM dashboard"
+    },
+    {
+      "name": "feed-daily",
+      "manager": "process",
+      "display_name": "Feed Daily",
+      "cwd": "~/repos/trading-dashboard",
+      "start_command": ["python3", "-m", "feed_daily"],
+      "log_file": "~/.local/state/trading-dashboard/ops-console/logs/feed-daily.log",
+      "pid_file": "~/.local/state/trading-dashboard/ops-console/run/feed-daily.pid",
+      "note": "Static daily stats dashboard"
+    },
+    {
+      "name": "trade-sim",
+      "manager": "process",
+      "display_name": "Trade Sim",
+      "cwd": "~/repos/trading-dashboard",
+      "start_command": ["python3", "-m", "trade_sim"],
+      "log_file": "~/.local/state/trading-dashboard/ops-console/logs/trade-sim.log",
+      "pid_file": "~/.local/state/trading-dashboard/ops-console/run/trade-sim.pid",
+      "note": "Trade simulation dashboard"
+    },
+    {
+      "name": "trade-livesim",
+      "manager": "process",
+      "display_name": "Trade Livesim",
+      "cwd": "~/repos/trading-dashboard",
+      "start_command": ["python3", "-m", "trade_livesim"],
+      "log_file": "~/.local/state/trading-dashboard/ops-console/logs/trade-livesim.log",
+      "pid_file": "~/.local/state/trading-dashboard/ops-console/run/trade-livesim.pid",
+      "note": "Live-feed simulated trading dashboard"
+    }
+  ]
+}

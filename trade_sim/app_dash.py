@@ -108,6 +108,13 @@ def _head_last_update_ts(head: Path) -> float:
     return head.stat().st_mtime
 
 
+def _is_archived_path(path: Path, root: Path) -> bool:
+    try:
+        return "archive" in path.relative_to(root).parts
+    except ValueError:
+        return "archive" in path.parts
+
+
 def discover_heads(window_hours: int | None = None) -> dict[str, list[Path]]:
     grouped: dict[str, list[Path]] = {name: [] for name in ROOT_ORDER}
     cutoff_ts: float | None = None
@@ -118,6 +125,8 @@ def discover_heads(window_hours: int | None = None) -> dict[str, list[Path]]:
             continue
         for log_dir in root.rglob("log"):
             if not log_dir.is_dir():
+                continue
+            if _is_archived_path(log_dir, root):
                 continue
             state_dir = log_dir / "state"
             if not state_dir.is_dir():
@@ -722,7 +731,7 @@ def make_hour_figure(simdata: SimData, symbol: str, sdate: str, hour: int) -> go
         cols=1,
         shared_xaxes=True,
         vertical_spacing=0.05,
-        row_heights=[2.2, 1, 1, 1, 1, 1, 1, 1],
+        row_heights=[6.6, 1, 1, 1, 1, 1, 1, 1],
     )
     has_data = False
 
